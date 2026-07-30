@@ -1,0 +1,890 @@
+import asyncio
+import logging
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command, CommandStart
+from aiogram.types import (
+    CallbackQuery,
+    FSInputFile,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
+
+import amocrm
+import db
+import state
+from analyzer import (
+    analyze_transcript,
+    extract_metrics,
+    report_excerpt,
+    team_report,
+    uz_tz,
+)
+from config import (
+    AUDIO_DIR,
+    MANAGER_WHITELIST,
+    MIN_CALL_DURATION,
+    POLL_INTERVAL,
+    TELEGRAM_BOT_TOKEN,
+    TMP_DIR,
+    amo_enabled,
+)
+from transcriber import transcribe
+
+from config import DATA_DIR
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler(DATA_DIR / "bot.log", encoding="utf-8"),
+    ],
+)
+log = logging.getLogger("bot")
+
+bot = Bot(token=TELEGRAM_BOT_TOKEN)
+dp = Dispatcher()
+
+TG_LIMIT = 4096
+PAGE_SIZE = 8
+
+
+# ================== ВСПОМОГАТЕЛЬНОЕ ==================
+
+def split_message(text: str) -> list[str]:
+    chunks, current = [], ""
+    for line in text.split("\n"):
+        if len(current) + len(line) + 1 > TG_LIMIT:
+            if current:
+                chunks.append(current)
+            current = line[:TG_LIMIT]
+        else:
+            current = f"{current}\n{line}" if current else line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+async def send_long(chat_id: int, text: str, reply_markup=None) -> None:
+    chunks = split_message(text)
+    for i, chunk in enumerate(chunks):
+        await bot.send_message(
+            chat_id, chunk, reply_markup=reply_markup if i == len(chunks) - 1 else None
+        )
+
+
+def is_owner_chat(chat_id: int) -> bool:
+    return state.get_owner() == chat_id
+
+
+def fmt_dt(ts: int) -> str:
+    if not ts:
+        return "—"
+    return datetime.fromtimestamp(ts).strftime("%d.%m %H:%M")
+
+
+def fmt_dur(seconds: int) -> str:
+    m, s = divmod(int(seconds or 0), 60)
+    return f"{m}м{s:02d}с" if m else f"{s}с"
+
+
+def manager_allowed(name: str) -> bool:
+    """Только операторы из белого списка (плюс ручные загрузки)."""
+    if not MANAGER_WHITELIST:
+        return True
+    if name.startswith("📤"):
+        return True
+    low = name.strip().lower()
+    return any(w.lower() in low for w in MANAGER_WHITELIST)
+
+
+def main_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="👥 Сотрудники", callback_data="mgrs")],
+            [InlineKeyboardButton(text="📈 Отчёт за день", callback_data="daily")],
+            [InlineKeyboardButton(text="📊 Общая статистика", callback_data="stats")],
+        ]
+    )
+
+
+def back_kb(callback_data: str = "mgrs", text: str = "⬅️ Назад") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=text, callback_data=callback_data)]]
+    )
+
+
+MENU_TEXT = (
+    "📋 Главное меню\n\n"
+    "👥 Сотрудники — выберите менеджера, посмотрите его звонки, разбор AI и статистику.\n"
+    "📈 Отчёт за день — сколько клиентов обслужили, топ дня, системные ошибки и ТЗ каждому сотруднику (автоматически приходит в 20:00).\n"
+    "📊 Общая статистика — итоги по всему отделу.\n\n"
+    "🎧 Также можно просто прислать сюда запись звонка или текст расшифровки — "
+    "я сразу сделаю аудит."
+)
+
+
+# ================== КОМАНДЫ ==================
+
+@dp.message(CommandStart())
+async def cmd_start(message: Message) -> None:
+    owner = state.get_owner()
+    if owner is None:
+        state.set_owner(message.chat.id)
+        await message.answer("✅ Вы назначены владельцем бота.")
+    elif owner != message.chat.id:
+        await message.answer("⛔ Бот приватный и уже привязан к другому пользователю.")
+        return
+    await message.answer(MENU_TEXT, reply_markup=main_menu_kb())
+
+
+@dp.message(Command("menu"))
+async def cmd_menu(message: Message) -> None:
+    if not is_owner_chat(message.chat.id):
+        return
+    await message.answer(MENU_TEXT, reply_markup=main_menu_kb())
+
+
+@dp.message(Command("status"))
+async def cmd_status(message: Message) -> None:
+    if not is_owner_chat(message.chat.id):
+        return
+    if amo_enabled():
+        try:
+            name = await amocrm.check_connection()
+            amo_line = f"🟢 AmoCRM подключён: {name} (проверка каждые {POLL_INTERVAL} сек)"
+        except Exception as e:
+            amo_line = f"🔴 AmoCRM: ошибка подключения — {e}"
+    else:
+        amo_line = "⚪ AmoCRM не подключён (ручной режим). Добавьте AMO_SUBDOMAIN и AMO_ACCESS_TOKEN в файл .env"
+    await message.answer(
+        f"📡 Статус бота\n\n{amo_line}\n"
+        f"⏱ Минимальная длительность звонка: {MIN_CALL_DURATION} сек\n"
+        f"💾 Звонков в базе: {db.stats_for()['total']}",
+        reply_markup=main_menu_kb(),
+    )
+
+
+# ================== МЕНЮ / КНОПКИ ==================
+
+@dp.callback_query(F.data == "menu")
+async def cb_menu(cb: CallbackQuery) -> None:
+    await cb.message.edit_text(MENU_TEXT, reply_markup=main_menu_kb())
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "mgrs")
+async def cb_managers(cb: CallbackQuery) -> None:
+    # сотрудники = все пользователи AmoCRM + все, у кого есть звонки в базе
+    db_rows = {str(r["manager_id"]): (r["manager_name"], r["cnt"]) for r in db.managers()}
+    entries: list[tuple[str, str, int]] = []
+    if amo_enabled():
+        try:
+            users = await amocrm.get_users()
+            for uid, name in users.items():
+                _, cnt = db_rows.pop(str(uid), (name, 0))
+                if manager_allowed(name):
+                    entries.append((str(uid), name, cnt))
+        except Exception as e:
+            log.error("Не удалось получить сотрудников AmoCRM: %s", e)
+    for mid, (name, cnt) in db_rows.items():
+        if manager_allowed(name):
+            entries.append((mid, name, cnt))
+
+    if not entries:
+        await cb.message.edit_text(
+            "Пока нет ни сотрудников, ни разобранных звонков.\n\n"
+            "Пришлите запись звонка сюда — или дождитесь нового звонка из AmoCRM.",
+            reply_markup=back_kb("menu", "⬅️ Меню"),
+        )
+        await cb.answer()
+        return
+
+    entries.sort(key=lambda x: -x[2])
+    kb = [
+        [
+            InlineKeyboardButton(
+                text=f"👨‍💼 {name} ({cnt})",
+                callback_data=f"mgr:{mid}:0",
+            )
+        ]
+        for mid, name, cnt in entries
+    ]
+    kb.append([InlineKeyboardButton(text="⬅️ Меню", callback_data="menu")])
+    await cb.message.edit_text(
+        "👥 Сотрудники (в скобках — количество разобранных звонков):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("mgr:"))
+async def cb_manager(cb: CallbackQuery) -> None:
+    _, manager_id, page_s = cb.data.split(":")
+    page = int(page_s)
+    total = db.count_for(manager_id)
+    calls = db.calls_for(manager_id, offset=page * PAGE_SIZE, limit=PAGE_SIZE)
+
+    name = "Сотрудник"
+    if calls:
+        name = db.get_call(calls[0]["id"])["manager_name"]
+    elif amo_enabled() and manager_id.isdigit():
+        try:
+            users = await amocrm.get_users()
+            name = users.get(int(manager_id), name)
+        except Exception:
+            pass
+
+    # неразобранные звонки этого сотрудника из CRM (можно разобрать по нажатию)
+    pending = []
+    if page == 0 and amo_enabled() and manager_id.isdigit():
+        try:
+            crm_calls = await amocrm.fetch_recent_calls()
+            pending = [
+                c
+                for c in crm_calls
+                if c.get("created_by") == int(manager_id)
+                and c["duration"] >= MIN_CALL_DURATION
+                and c["link"]
+                and not db.has_note(c["note_id"])
+            ][:10]
+        except Exception as e:
+            log.error("Ошибка получения звонков CRM: %s", e)
+
+    if total:
+        stats = db.stats_for(manager_id)
+        header = f"👨‍💼 {name}\n\n{db.format_stats(stats)}\n\n"
+    else:
+        header = f"👨‍💼 {name}\n\nРазобранных звонков пока нет.\n\n"
+    if calls or pending:
+        header += (
+            "Выберите звонок (✅❌❓ — уже разобран: аудио + PDF, "
+            "⬜ — новый: разберу при нажатии):"
+        )
+    else:
+        header += "Звонков с записью в CRM пока не видно."
+
+    kb = []
+    for c in calls:
+        emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
+        score = f"{c['score']}/10" if c["score"] is not None else "—"
+        label = f"{emoji} {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {score} • {c['phone'] or 'без номера'}"
+        kb.append([InlineKeyboardButton(text=label[:60], callback_data=f"call:{c['id']}")])
+    for c in pending:
+        label = f"⬜ {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {c['phone'] or 'без номера'}"
+        kb.append(
+            [InlineKeyboardButton(text=label[:60], callback_data=f"anlz:{c['note_id']}:{manager_id}")]
+        )
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️", callback_data=f"mgr:{manager_id}:{page - 1}"))
+    if (page + 1) * PAGE_SIZE < total:
+        nav.append(InlineKeyboardButton(text="➡️", callback_data=f"mgr:{manager_id}:{page + 1}"))
+    if nav:
+        kb.append(nav)
+    kb.append([InlineKeyboardButton(text="📅 Выбрать дату", callback_data=f"dates:{manager_id}")])
+    kb.append([InlineKeyboardButton(text="👥 К сотрудникам", callback_data="mgrs")])
+
+    await cb.message.edit_text(header, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await cb.answer()
+
+
+WEEKDAYS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+def _day_bounds(day_key: str) -> tuple[int, int]:
+    d = datetime.strptime(day_key, "%Y%m%d")
+    start = int(d.timestamp())
+    return start, start + 86400
+
+
+@dp.callback_query(F.data.startswith("dates:"))
+async def cb_dates(cb: CallbackQuery) -> None:
+    manager_id = cb.data.split(":")[1]
+    date_counts: dict[str, int] = dict(db.dates_for(manager_id))
+
+    # добавляем даты неразобранных звонков из CRM
+    if amo_enabled() and manager_id.isdigit():
+        try:
+            crm_calls = await amocrm.fetch_recent_calls()
+            for c in crm_calls:
+                if (
+                    c.get("created_by") == int(manager_id)
+                    and c["duration"] >= MIN_CALL_DURATION
+                    and c["link"]
+                    and not db.has_note(c["note_id"])
+                    and c["created_at"]
+                ):
+                    key = datetime.fromtimestamp(c["created_at"]).strftime("%Y%m%d")
+                    date_counts[key] = date_counts.get(key, 0) + 1
+        except Exception as e:
+            log.error("Ошибка получения звонков CRM: %s", e)
+
+    if not date_counts:
+        await cb.answer("Звонков пока нет")
+        return
+
+    kb = []
+    for key in sorted(date_counts, reverse=True)[:14]:
+        d = datetime.strptime(key, "%Y%m%d")
+        label = f"📅 {d.strftime('%d.%m.%Y')} ({WEEKDAYS[d.weekday()]}) • {date_counts[key]} зв."
+        kb.append([InlineKeyboardButton(text=label, callback_data=f"mgrd:{manager_id}:{key}")])
+    kb.append([InlineKeyboardButton(text="⬅️ К сотруднику", callback_data=f"mgr:{manager_id}:0")])
+
+    await cb.message.edit_text(
+        "📅 Выберите дату — покажу все разговоры за этот день:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("mgrd:"))
+async def cb_manager_day(cb: CallbackQuery) -> None:
+    _, manager_id, day_key = cb.data.split(":")
+    start_ts, end_ts = _day_bounds(day_key)
+    day_label = datetime.strptime(day_key, "%Y%m%d").strftime("%d.%m.%Y")
+
+    calls = db.calls_for_day(manager_id, start_ts, end_ts)
+
+    pending = []
+    if amo_enabled() and manager_id.isdigit():
+        try:
+            crm_calls = await amocrm.fetch_recent_calls()
+            pending = [
+                c
+                for c in crm_calls
+                if c.get("created_by") == int(manager_id)
+                and c["duration"] >= MIN_CALL_DURATION
+                and c["link"]
+                and not db.has_note(c["note_id"])
+                and c["created_at"]
+                and start_ts <= c["created_at"] < end_ts
+            ]
+        except Exception as e:
+            log.error("Ошибка получения звонков CRM: %s", e)
+
+    name = "Сотрудник"
+    if calls:
+        row = db.get_call(calls[0]["id"])
+        name = row["manager_name"]
+    elif amo_enabled() and manager_id.isdigit():
+        try:
+            users = await amocrm.get_users()
+            name = users.get(int(manager_id), name)
+        except Exception:
+            pass
+
+    if not calls and not pending:
+        await cb.answer(f"За {day_label} звонков нет")
+        return
+
+    kb = []
+    for c in calls:
+        emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
+        score = f"{c['score']}/10" if c["score"] is not None else "—"
+        label = f"{emoji} {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {score} • {c['phone'] or 'без номера'}"
+        kb.append([InlineKeyboardButton(text=label[:60], callback_data=f"call:{c['id']}")])
+    for c in pending[:20]:
+        label = f"⬜ {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {c['phone'] or 'без номера'}"
+        kb.append(
+            [InlineKeyboardButton(text=label[:60], callback_data=f"anlz:{c['note_id']}:{manager_id}")]
+        )
+    kb.append([InlineKeyboardButton(text="📅 Другая дата", callback_data=f"dates:{manager_id}")])
+    kb.append([InlineKeyboardButton(text="⬅️ К сотруднику", callback_data=f"mgr:{manager_id}:0")])
+
+    await cb.message.edit_text(
+        f"👨‍💼 {name} • 📅 {day_label}\n\n"
+        f"Разговоры за этот день ({len(calls) + len(pending)}):\n"
+        "✅❌❓ — разобраны, ⬜ — разберу при нажатии",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+    )
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("anlz:"))
+async def cb_analyze(cb: CallbackQuery) -> None:
+    _, note_id_s, manager_id = cb.data.split(":")
+    note_id = int(note_id_s)
+    await cb.answer("Разбираю звонок...")
+
+    existing = db.find_by_note(note_id)
+    if existing:
+        await send_call_package(cb.message.chat.id, existing["id"])
+        return
+
+    msg = await bot.send_message(
+        cb.message.chat.id, "🎧 Скачиваю запись, расшифровываю и готовлю PDF (1-2 минуты)..."
+    )
+    try:
+        crm_calls = await amocrm.fetch_recent_calls()
+        call = next((c for c in crm_calls if c["note_id"] == note_id), None)
+        if call is None:
+            await msg.edit_text("❌ Звонок не найден в CRM (возможно, устарел). Откройте карточку сотрудника заново.")
+            return
+        state.mark_processed(note_id)
+        row_id = await process_amo_call(call)
+        if row_id is None:
+            await msg.edit_text("⚠️ Не удалось разобрать звонок (нет речи или ошибка записи).")
+            return
+        await msg.delete()
+        await send_call_package(cb.message.chat.id, row_id)
+    except Exception as e:
+        log.exception("Ошибка разбора звонка %s", note_id)
+        await msg.edit_text(f"❌ Ошибка: {e}")
+
+
+async def send_call_package(chat_id: int, call_id: int) -> None:
+    """Аудио + PDF (диалог на узбекском + ТЗ) + кнопки."""
+    c = db.get_call(call_id)
+    if not c:
+        await bot.send_message(chat_id, "Звонок не найден.")
+        return
+
+    emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
+    score = f"{c['score']}/10" if c["score"] is not None else "—"
+    caption_lines = [
+        f"{emoji} {c['manager_name']} • {score}",
+        f"📅 {fmt_dt(c['created_at'])} • {c['direction'] or '—'} • {fmt_dur(c['duration'])}",
+    ]
+    if c["phone"]:
+        caption_lines.append(f"📱 {c['phone']}")
+    if c["card_url"]:
+        caption_lines.append(f"🔗 {c['card_url']}")
+    caption = "\n".join(caption_lines)
+
+    # 1. Аудио
+    audio_sent = False
+    audio_path = Path(c["audio_path"]) if c["audio_path"] else None
+    if audio_path and audio_path.exists():
+        await bot.send_audio(chat_id, FSInputFile(audio_path), caption=caption[:1024])
+        audio_sent = True
+    elif c["rec_link"]:
+        try:
+            fresh = await amocrm.download_recording(
+                {"link": c["rec_link"], "note_id": c["note_id"] or c["id"]}, AUDIO_DIR
+            )
+            await bot.send_audio(chat_id, FSInputFile(fresh), caption=caption[:1024])
+            audio_sent = True
+        except Exception as e:
+            log.error("Не удалось скачать запись повторно: %s", e)
+    if not audio_sent:
+        await bot.send_message(chat_id, caption + "\n(аудиозапись недоступна)")
+
+    # 2. Короткое ТЗ на узбекском (генерируем один раз, потом берём из базы)
+    uz = c["uz_doc"]
+    if not uz and c["transcript"]:
+        try:
+            uz = await uz_tz(c["transcript"])
+            db.set_uz_doc(call_id, uz)
+        except Exception as e:
+            log.exception("Ошибка генерации ТЗ")
+            uz = None
+
+    kb = back_kb(f"mgr:{c['manager_id']}:0", "⬅️ К звонкам сотрудника")
+    if uz:
+        await send_long(chat_id, uz, reply_markup=kb)
+    else:
+        await bot.send_message(chat_id, "ТЗ недоступно для этого звонка.", reply_markup=kb)
+
+
+@dp.callback_query(F.data.startswith("call:"))
+async def cb_call(cb: CallbackQuery) -> None:
+    call_id = int(cb.data.split(":")[1])
+    await cb.answer()
+    await send_call_package(cb.message.chat.id, call_id)
+
+
+@dp.callback_query(F.data.startswith("txt:"))
+async def cb_transcript(cb: CallbackQuery) -> None:
+    call_id = int(cb.data.split(":")[1])
+    c = db.get_call(call_id)
+    if not c:
+        await cb.answer("Звонок не найден")
+        return
+    await cb.answer()
+    text = c["transcript"] or "Текст расшифровки отсутствует."
+    await send_long(
+        cb.message.chat.id,
+        f"📃 Полный текст разговора (дословно, как записано):\n\n{text}",
+        reply_markup=back_kb(f"mgr:{c['manager_id']}:0", "⬅️ К звонкам сотрудника"),
+    )
+
+
+@dp.callback_query(F.data.startswith("rep:"))
+async def cb_report(cb: CallbackQuery) -> None:
+    call_id = int(cb.data.split(":")[1])
+    c = db.get_call(call_id)
+    if not c:
+        await cb.answer("Звонок не найден")
+        return
+    await cb.answer()
+    await send_long(
+        cb.message.chat.id,
+        c["report"] or "Отчёт отсутствует.",
+        reply_markup=back_kb(f"mgr:{c['manager_id']}:0", "⬅️ К звонкам сотрудника"),
+    )
+
+
+@dp.callback_query(F.data == "stats")
+async def cb_stats(cb: CallbackQuery) -> None:
+    total_stats = db.stats_for()
+    lines = ["📊 Общая статистика отдела\n", db.format_stats(total_stats)]
+    rows = [r for r in db.managers() if manager_allowed(r["manager_name"])]
+    if rows:
+        lines.append("\n👥 По сотрудникам:")
+        for r in rows:
+            s = db.stats_for(r["manager_id"])
+            avg = f", ср. балл {s['avg_score']}/10" if s["avg_score"] is not None else ""
+            lines.append(
+                f"• {r['manager_name']}: {s['total']} зв., "
+                f"✅{s['percent']['ok']}% ❌{s['percent']['fail']}% ❓{s['percent']['doubt']}%{avg}"
+            )
+    await cb.message.edit_text("\n".join(lines), reply_markup=back_kb("menu", "⬅️ Меню"))
+    await cb.answer()
+
+
+# ================== ОТЧЁТ ЗА ДЕНЬ ==================
+
+DAILY_REPORT_HOUR = 20  # автоотчёт каждый день в 20:00
+
+
+async def build_daily_report() -> str | None:
+    now = datetime.now()
+    day_start = int(datetime(now.year, now.month, now.day).timestamp())
+    calls = [
+        c
+        for c in db.calls_between(day_start, day_start + 86400)
+        if manager_allowed(c["manager_name"])
+    ]
+    if not calls:
+        return None
+
+    phones = {c["phone"] for c in calls if c["phone"]}
+    no_phone = sum(1 for c in calls if not c["phone"])
+    clients = len(phones) + no_phone
+    verdicts = {"ok": 0, "fail": 0, "doubt": 0}
+    scores = []
+    per_mgr: dict[str, dict] = {}
+    for c in calls:
+        verdicts[c["verdict"]] = verdicts.get(c["verdict"], 0) + 1
+        if c["score"] is not None:
+            scores.append(c["score"])
+        m = per_mgr.setdefault(
+            c["manager_name"], {"n": 0, "ok": 0, "fail": 0, "doubt": 0, "scores": []}
+        )
+        m["n"] += 1
+        m[c["verdict"]] += 1
+        if c["score"] is not None:
+            m["scores"].append(c["score"])
+
+    avg = round(sum(scores) / len(scores), 1) if scores else "—"
+    facts = [
+        f"Дата: {now.strftime('%d.%m.%Y')}",
+        f"Клиентов обслужено (уникальных): {clients}",
+        f"Звонков разобрано: {len(calls)}",
+        f"Успешных: {verdicts['ok']}, неуспешных: {verdicts['fail']}, под вопросом: {verdicts['doubt']}",
+        f"Средний балл отдела: {avg}/10",
+        "",
+        "По сотрудникам:",
+    ]
+    for name, m in sorted(per_mgr.items(), key=lambda x: -x[1]["n"]):
+        m_avg = round(sum(m["scores"]) / len(m["scores"]), 1) if m["scores"] else "—"
+        facts.append(
+            f"- {name}: {m['n']} зв., ср. балл {m_avg}/10, "
+            f"успешных {m['ok']}, неуспешных {m['fail']}, под вопросом {m['doubt']}"
+        )
+
+    summaries = []
+    for c in calls[:25]:
+        summaries.append(
+            f"— {c['manager_name']} • {fmt_dt(c['created_at'])} • {c['phone'] or 'без номера'}:\n"
+            f"{report_excerpt(c['report'] or '')}"
+        )
+    if len(calls) > 25:
+        summaries.append(f"(и ещё {len(calls) - 25} звонков — в выжимку не вошли)")
+
+    return await team_report("\n".join(facts), "\n\n".join(summaries))
+
+
+@dp.callback_query(F.data == "daily")
+async def cb_daily(cb: CallbackQuery) -> None:
+    await cb.answer("Готовлю отчёт...")
+    msg = await bot.send_message(cb.message.chat.id, "📈 Собираю общий отчёт за день...")
+    try:
+        report = await build_daily_report()
+        if report is None:
+            await msg.edit_text(
+                "За сегодня пока нет ни одного разобранного звонка — отчёт будет, "
+                "когда появятся звонки."
+            )
+            return
+        await msg.delete()
+        await send_long(cb.message.chat.id, report, reply_markup=back_kb("menu", "📋 Меню"))
+    except Exception as e:
+        log.exception("Ошибка отчёта за день")
+        await msg.edit_text(f"❌ Ошибка при построении отчёта: {e}")
+
+
+async def daily_report_loop() -> None:
+    while True:
+        await asyncio.sleep(300)
+        try:
+            owner = state.get_owner()
+            if owner is None:
+                continue
+            now = datetime.now()
+            today = now.strftime("%Y-%m-%d")
+            if now.hour >= DAILY_REPORT_HOUR and state.get_last_daily() != today:
+                report = await build_daily_report()
+                state.set_last_daily(today)
+                if report:
+                    await bot.send_message(owner, "🌙 Автоматический отчёт за день:")
+                    await send_long(owner, report)
+        except Exception as e:
+            log.error("Ошибка автоотчёта: %s", e)
+
+
+# ================== РУЧНАЯ ЗАГРУЗКА ==================
+
+@dp.message(F.voice | F.audio | F.document)
+async def handle_file(message: Message) -> None:
+    if not is_owner_chat(message.chat.id):
+        await message.answer("⛔ Бот приватный. Отправьте /start, если вы владелец.")
+        return
+
+    doc = message.document
+    if doc and (doc.file_name or "").lower().endswith(".txt"):
+        path = TMP_DIR / f"tg_{doc.file_id}.txt"
+        await bot.download(doc, destination=path)
+        transcript = path.read_text(encoding="utf-8", errors="ignore")
+        path.unlink(missing_ok=True)
+        status = await message.answer("🧠 Провожу жёсткий аудит звонка...")
+        try:
+            await run_manual_analysis(message, transcript)
+            await status.delete()
+        except Exception as e:
+            log.exception("Ошибка анализа txt")
+            await status.edit_text(f"❌ Ошибка: {e}")
+        return
+
+    media = message.voice or message.audio or doc
+    if doc and not (doc.mime_type or "").startswith("audio"):
+        await message.answer("Пришлите аудиофайл (mp3/wav/ogg/m4a), голосовое или .txt с расшифровкой.")
+        return
+
+    if media.file_size and media.file_size > 20 * 1024 * 1024:
+        await message.answer("⚠️ Файл больше 20 МБ — Telegram не даёт ботам скачивать такие файлы. Сожмите запись или пришлите частями.")
+        return
+
+    ext = ".ogg" if message.voice else ".mp3"
+    fname = (doc and doc.file_name) or (message.audio and message.audio.file_name) or ""
+    if "." in fname:
+        ext = "." + fname.rsplit(".", 1)[-1]
+
+    path = AUDIO_DIR / f"manual_{media.file_unique_id}{ext}"
+    status = await message.answer("🎧 Получил запись. Расшифровываю...")
+    try:
+        await bot.download(media, destination=path)
+        transcript = await transcribe(path)
+        if len(transcript) < 30:
+            await status.edit_text("⚠️ В записи почти нет речи — нечего анализировать.")
+            path.unlink(missing_ok=True)
+            return
+        await status.edit_text("🧠 Расшифровал. Провожу жёсткий аудит звонка...")
+        duration = (message.voice and message.voice.duration) or (
+            message.audio and message.audio.duration
+        ) or 0
+        await run_manual_analysis(message, transcript, duration=duration, audio_path=path)
+        await status.delete()
+    except Exception as e:
+        log.exception("Ошибка обработки файла")
+        await status.edit_text(f"❌ Ошибка: {e}")
+
+
+@dp.message(F.text)
+async def handle_text(message: Message) -> None:
+    if not is_owner_chat(message.chat.id):
+        await message.answer("⛔ Бот приватный. Отправьте /start, если вы владелец.")
+        return
+    text = message.text.strip()
+    if len(text) < 100:
+        await message.answer(
+            "Пришлите запись звонка (аудио/голосовое) или полный текст расшифровки "
+            "(не короче 100 символов).\n\nМеню: /menu",
+        )
+        return
+    status = await message.answer("🧠 Провожу жёсткий аудит звонка...")
+    try:
+        await run_manual_analysis(message, text)
+        await status.delete()
+    except Exception as e:
+        log.exception("Ошибка анализа текста")
+        await status.edit_text(f"❌ Ошибка: {e}")
+
+
+async def run_manual_analysis(
+    message: Message, transcript: str, duration: int = 0, audio_path: Path | None = None
+) -> None:
+    report = await analyze_transcript(transcript)
+    score, verdict = extract_metrics(report)
+    row_id = db.save_call(
+        source="manual",
+        note_id=None,
+        manager_id="manual",
+        manager_name="📤 Ручные загрузки",
+        phone="",
+        direction="",
+        duration=duration,
+        created_at=int(message.date.timestamp()) if message.date else int(time.time()),
+        transcript=transcript,
+        report=report,
+        score=score,
+        verdict=verdict,
+        card_url="",
+        rec_link="",
+        audio_path=str(audio_path) if audio_path else "",
+    )
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="📋 Аудио + ТЗ (узбекча)", callback_data=f"call:{row_id}")],
+            [InlineKeyboardButton(text="📋 Меню", callback_data="menu")],
+        ]
+    )
+    await send_long(message.chat.id, report, reply_markup=kb)
+
+
+# ================== АВТОРЕЖИМ: ОПРОС AMOCRM ==================
+
+async def process_amo_call(call: dict) -> int | None:
+    """Скачивает, расшифровывает и разбирает звонок. Тихо: ничего не шлёт в чат.
+
+    Возвращает id записи в базе или None, если разобрать не удалось.
+    """
+    users = {}
+    try:
+        users = await amocrm.get_users()
+    except Exception as e:
+        log.error("Не удалось получить сотрудников AmoCRM: %s", e)
+    manager_name = users.get(call.get("created_by"), "Неизвестный сотрудник")
+    manager_id = str(call.get("created_by") or "unknown")
+
+    direction = "Входящий" if call["note_type"] == "call_in" else "Исходящий"
+    meta = (
+        f"Менеджер (из CRM): {manager_name}\n"
+        f"Тип: {direction} звонок\n"
+        f"Телефон клиента: {call['phone']}\n"
+        f"Длительность: {call['duration']} сек"
+    )
+    card_url = amocrm.entity_url(call)
+
+    try:
+        audio_path = await amocrm.download_recording(call, AUDIO_DIR)
+        transcript = await transcribe(audio_path)
+        if len(transcript) < 30:
+            log.info("Звонок %s: почти нет речи, пропускаю", call["note_id"])
+            return None
+        report = await analyze_transcript(transcript, meta)
+        score, verdict = extract_metrics(report)
+        row_id = db.save_call(
+            source="amo",
+            note_id=call["note_id"],
+            manager_id=manager_id,
+            manager_name=manager_name,
+            phone=call["phone"],
+            direction=direction,
+            duration=call["duration"],
+            created_at=call["created_at"] or int(time.time()),
+            transcript=transcript,
+            report=report,
+            score=score,
+            verdict=verdict,
+            card_url=card_url,
+            rec_link=call["link"],
+            audio_path=str(audio_path),
+        )
+        log.info("Звонок %s разобран: %s, %s/10", call["note_id"], manager_name, score)
+        return row_id
+    except Exception:
+        log.exception("Ошибка обработки звонка %s", call["note_id"])
+        return None
+
+
+async def amo_poller() -> None:
+    if not amo_enabled():
+        log.info("AmoCRM не настроен — работаю в ручном режиме (файлы/текст в боте).")
+        return
+    try:
+        name = await amocrm.check_connection()
+        log.info("AmoCRM подключён: %s", name)
+    except Exception as e:
+        log.error("AmoCRM: ошибка подключения — %s", e)
+        owner = state.get_owner()
+        if owner:
+            await bot.send_message(owner, f"🔴 AmoCRM: ошибка подключения — {e}")
+        return
+
+    if not state.amo_initialized():
+        try:
+            for call in await amocrm.fetch_recent_calls():
+                state.mark_processed(call["note_id"])
+            state.set_amo_initialized()
+            log.info("Первый запуск: старые звонки пропущены, слежу только за новыми.")
+        except Exception as e:
+            log.error("Ошибка инициализации AmoCRM: %s", e)
+
+    owner_warned = False
+    while True:
+        # пока никто не нажал /start — звонки не трогаем, чтобы отчёты не пропали
+        if state.get_owner() is None:
+            if not owner_warned:
+                log.info("Жду, пока владелец нажмёт /start в боте — звонки пока не обрабатываю.")
+                owner_warned = True
+            await asyncio.sleep(10)
+            continue
+        try:
+            calls = await amocrm.fetch_recent_calls()
+            users = {}
+            try:
+                users = await amocrm.get_users()
+            except Exception as e:
+                log.error("Не удалось получить сотрудников: %s", e)
+            for call in calls:
+                if state.is_processed(call["note_id"]):
+                    continue
+                state.mark_processed(call["note_id"])
+                if call["duration"] < MIN_CALL_DURATION:
+                    log.info(
+                        "Звонок %s пропущен: %d сек (недозвон/короткий)",
+                        call["note_id"], call["duration"],
+                    )
+                    continue
+                mgr_name = users.get(call.get("created_by"), "")
+                if users and not manager_allowed(mgr_name or "?"):
+                    log.info(
+                        "Звонок %s пропущен: сотрудник %s не в списке анализа",
+                        call["note_id"], mgr_name or call.get("created_by"),
+                    )
+                    continue
+                log.info("Новый звонок %s (%d сек) — обрабатываю", call["note_id"], call["duration"])
+                await process_amo_call(call)
+        except Exception as e:
+            log.error("Ошибка опроса AmoCRM: %s", e)
+        await asyncio.sleep(POLL_INTERVAL)
+
+
+async def main() -> None:
+    log.info("Бот запускается...")
+    asyncio.create_task(amo_poller())
+    asyncio.create_task(daily_report_loop())
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
