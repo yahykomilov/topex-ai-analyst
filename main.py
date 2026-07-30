@@ -35,6 +35,7 @@ from config import (
     amo_enabled,
 )
 from transcriber import transcribe
+from preprocess import preprocess
 
 from config import DATA_DIR
 
@@ -274,10 +275,15 @@ async def cb_manager(cb: CallbackQuery) -> None:
     for c in calls:
         emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
         score = f"{c['score']}/10" if c["score"] is not None else "—"
-        label = f"{emoji} {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {score} • {c['phone'] or 'без номера'}"
+        status_tag = db.CALL_STATUS_SHORT.get(c["call_status"], "") if c["call_status"] else ""
+        status_str = f" • {status_tag}" if status_tag else ""
+        label = f"{emoji} {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {score}{status_str} • {c['phone'] or 'без номера'}"
         kb.append([InlineKeyboardButton(text=label[:60], callback_data=f"call:{c['id']}")])
     for c in pending:
-        label = f"⬜ {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {c['phone'] or 'без номера'}"
+        cs = c["call_status"]
+        status_tag = db.CALL_STATUS_SHORT.get(cs, "") if cs else ""
+        status_str = f" • {status_tag}" if status_tag else ""
+        label = f"⬜ {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])}{status_str} • {c['phone'] or 'без номера'}"
         kb.append(
             [InlineKeyboardButton(text=label[:60], callback_data=f"anlz:{c['note_id']}:{manager_id}")]
         )
@@ -389,10 +395,15 @@ async def cb_manager_day(cb: CallbackQuery) -> None:
     for c in calls:
         emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
         score = f"{c['score']}/10" if c["score"] is not None else "—"
-        label = f"{emoji} {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {score} • {c['phone'] or 'без номера'}"
+        status_tag = db.CALL_STATUS_SHORT.get(c["call_status"], "") if c["call_status"] else ""
+        status_str = f" • {status_tag}" if status_tag else ""
+        label = f"{emoji} {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {score}{status_str} • {c['phone'] or 'без номера'}"
         kb.append([InlineKeyboardButton(text=label[:60], callback_data=f"call:{c['id']}")])
     for c in pending[:20]:
-        label = f"⬜ {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {c['phone'] or 'без номера'}"
+        cs = c["call_status"]
+        status_tag = db.CALL_STATUS_SHORT.get(cs, "") if cs else ""
+        status_str = f" • {status_tag}" if status_tag else ""
+        label = f"⬜ {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])}{status_str} • {c['phone'] or 'без номера'}"
         kb.append(
             [InlineKeyboardButton(text=label[:60], callback_data=f"anlz:{c['note_id']}:{manager_id}")]
         )
@@ -449,9 +460,11 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
 
     emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
     score = f"{c['score']}/10" if c["score"] is not None else "—"
+    status_label = db.CALL_STATUS_LABELS.get(c["call_status"], "") if c["call_status"] else ""
+    status_str = f" • {status_label}" if status_label else ""
     caption_lines = [
         f"{emoji} {c['manager_name']} • {score}",
-        f"📅 {fmt_dt(c['created_at'])} • {c['direction'] or '—'} • {fmt_dur(c['duration'])}",
+        f"📅 {fmt_dt(c['created_at'])} • {c['direction'] or '—'} • {fmt_dur(c['duration'])}{status_str}",
     ]
     if c["phone"]:
         caption_lines.append(f"📱 {c['phone']}")
@@ -692,6 +705,7 @@ async def handle_file(message: Message) -> None:
     status = await message.answer("🎧 Получил запись. Расшифровываю...")
     try:
         await bot.download(media, destination=path)
+        path = preprocess(path)
         transcript = await transcribe(path)
         if len(transcript) < 30:
             await status.edit_text("⚠️ В записи почти нет речи — нечего анализировать.")
@@ -784,8 +798,34 @@ async def process_amo_call(call: dict) -> int | None:
     )
     card_url = amocrm.entity_url(call)
 
+    call_status = call.get("call_status")
+
+    # Недозвон / пропущенный — не анализируем, просто фиксируем
+    if call_status in (5, 6, 7):
+        row_id = db.save_call(
+            source="amo",
+            note_id=call["note_id"],
+            manager_id=manager_id,
+            manager_name=manager_name,
+            phone=call["phone"],
+            direction=direction,
+            duration=call["duration"],
+            created_at=call["created_at"] or int(time.time()),
+            transcript="",
+            report="",
+            score=0,
+            verdict="fail",
+            call_status=call_status,
+            card_url=card_url,
+            rec_link="",
+            audio_path="",
+        )
+        log.info("Звонок %s: недозвон/пропущен (status=%s), сохранён", call["note_id"], call_status)
+        return row_id
+
     try:
         audio_path = await amocrm.download_recording(call, AUDIO_DIR)
+        audio_path = preprocess(audio_path)
         transcript = await transcribe(audio_path)
         if len(transcript) < 30:
             log.info("Звонок %s: почти нет речи, пропускаю", call["note_id"])
@@ -805,6 +845,7 @@ async def process_amo_call(call: dict) -> int | None:
             report=report,
             score=score,
             verdict=verdict,
+            call_status=call_status,
             card_url=card_url,
             rec_link=call["link"],
             audio_path=str(audio_path),

@@ -34,9 +34,14 @@ CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5").strip()
 
 # Groq — бесплатный тариф для тестирования (расшифровка + анализ)
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_API_KEY_2 = os.getenv("GROQ_API_KEY_2", "").strip()    # запасной Groq аккаунт
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo").strip()
 GROQ_ANALYSIS_MODEL = os.getenv("GROQ_ANALYSIS_MODEL", "llama-3.3-70b-versatile").strip()
+
+# Gemini — запасной транскрибер для узбекского (когда Whisper плох)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip()
 
 AMO_SUBDOMAIN = os.getenv("AMO_SUBDOMAIN", "").strip().replace(".amocrm.ru", "")
 AMO_ACCESS_TOKEN = os.getenv("AMO_ACCESS_TOKEN", "").strip()

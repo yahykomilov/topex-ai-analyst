@@ -26,15 +26,17 @@ _conn.execute(
         report TEXT DEFAULT '',
         score INTEGER,                   -- оценка 0-10 из отчёта
         verdict TEXT DEFAULT 'doubt',    -- ok | fail | doubt
+        call_status INTEGER,             -- amoCRM: 4=разговор, 6=недозвон...
         card_url TEXT DEFAULT ''
     )
     """
 )
-# миграции: новые колонки для PDF и аудио
+# миграции: новые колонки
 for _col, _typ in (
     ("uz_doc", "TEXT"),
     ("rec_link", "TEXT"),
     ("audio_path", "TEXT"),
+    ("call_status", "INTEGER"),
 ):
     try:
         _conn.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_typ}")
@@ -45,12 +47,32 @@ _conn.commit()
 VERDICT_EMOJI = {"ok": "✅", "fail": "❌", "doubt": "❓"}
 VERDICT_LABEL = {"ok": "Успешные", "fail": "Неуспешные", "doubt": "Под вопросом"}
 
+# amoCRM call_status: 4=разговор состоялся, 5=пропущенный, 6=недозвон, 7=нет соединения
+CALL_STATUS_LABELS = {
+    1: "📞 Планируется",
+    2: "📅 Запланирован",
+    3: "🔄 Совершён",
+    4: "✅ Разговор",
+    5: "📳 Пропущен",
+    6: "❌ Недозвон",
+    7: "🚫 Нет соединения",
+}
+CALL_STATUS_SHORT = {
+    1: "план",
+    2: "запл.",
+    3: "сов.",
+    4: "разг.",
+    5: "проп.",
+    6: "недозв.",
+    7: "нет соед.",
+}
+
 
 def save_call(**kw) -> int:
     fields = (
         "source", "note_id", "manager_id", "manager_name", "phone", "direction",
         "duration", "created_at", "transcript", "report", "score", "verdict", "card_url",
-        "uz_doc", "rec_link", "audio_path",
+        "uz_doc", "rec_link", "audio_path", "call_status",
     )
     values = [kw.get(f) for f in fields]
     with _lock:
@@ -75,7 +97,7 @@ def managers() -> list[sqlite3.Row]:
 def calls_for(manager_id: str, offset: int = 0, limit: int = 8) -> list[sqlite3.Row]:
     return _conn.execute(
         """
-        SELECT id, phone, direction, duration, created_at, score, verdict
+        SELECT id, phone, direction, duration, created_at, score, verdict, call_status
         FROM calls WHERE manager_id = ?
         ORDER BY created_at DESC, id DESC
         LIMIT ? OFFSET ?
@@ -132,7 +154,7 @@ def dates_for(manager_id: str) -> list[tuple[str, int]]:
 def calls_for_day(manager_id: str, start_ts: int, end_ts: int) -> list[sqlite3.Row]:
     return _conn.execute(
         """
-        SELECT id, phone, direction, duration, created_at, score, verdict
+        SELECT id, phone, direction, duration, created_at, score, verdict, call_status
         FROM calls
         WHERE manager_id = ? AND created_at >= ? AND created_at < ?
         ORDER BY created_at DESC
