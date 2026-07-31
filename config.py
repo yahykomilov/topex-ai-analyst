@@ -46,6 +46,12 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 AMO_SUBDOMAIN = os.getenv("AMO_SUBDOMAIN", "").strip().replace(".amocrm.ru", "")
 AMO_ACCESS_TOKEN = os.getenv("AMO_ACCESS_TOKEN", "").strip()
 
+# Аккаунт один и тот же — адрес кабинета фиксированный (владелец его не вводит).
+# Можно переопределить через .env AMO_HOST, иначе — кабинет Topex.
+AMO_DEFAULT_HOST = os.getenv(
+    "AMO_HOST", (f"{AMO_SUBDOMAIN}.amocrm.ru" if AMO_SUBDOMAIN else "topextexnikum.amocrm.ru")
+).strip()
+
 # язык расшифровки аудио (uz/ru/...); пусто — автоопределение
 WHISPER_LANGUAGE = os.getenv("WHISPER_LANGUAGE", "").strip()
 

@@ -1,25 +1,77 @@
-"""Опрос AmoCRM: ищем новые звонки (примечания call_in / call_out) и записи разговоров."""
+"""Опрос AmoCRM: ищем новые звонки (примечания call_in / call_out) и записи разговоров.
+
+Ключи доступа владелец вводит прямо в боте (см. state.get_amo). Раньше они брались
+из .env один раз при старте — теперь читаются на лету, чтобы можно было сменить
+аккаунт без перезапуска.
+"""
 
 import logging
 from pathlib import Path
 
 import httpx
 
-from config import AMO_ACCESS_TOKEN, AMO_SUBDOMAIN, TMP_DIR
+import state
+from config import TMP_DIR
 
 log = logging.getLogger("amocrm")
-
-BASE_URL = f"https://{AMO_SUBDOMAIN}.amocrm.ru"
-HEADERS = {"Authorization": f"Bearer {AMO_ACCESS_TOKEN}"}
 
 NOTE_TYPES = ("call_in", "call_out")
 ENTITIES = ("leads", "contacts")
 
 
+# ================== ДОСТУП / ПОДКЛЮЧЕНИЕ ==================
+
+def normalize_host(raw: str) -> str:
+    """Приводит адрес кабинета к виду 'sub.amocrm.ru'.
+
+    Принимает 'topextexnikum', 'topextexnikum.amocrm.ru',
+    'https://topextexnikum.amocrm.ru/leads/...' — вернёт 'topextexnikum.amocrm.ru'.
+    """
+    h = (raw or "").strip()
+    h = h.replace("https://", "").replace("http://", "")
+    h = h.split("/")[0].strip().lower()
+    if not h:
+        return ""
+    if "." not in h:
+        h = f"{h}.amocrm.ru"
+    return h
+
+
+def creds() -> dict | None:
+    """Ключи amoCRM, введённые владельцем (host + token + secret + integration_id)."""
+    return state.get_amo()
+
+
+def is_configured() -> bool:
+    return creds() is not None
+
+
+def _conn() -> tuple[str, dict]:
+    """Базовый URL кабинета и заголовок авторизации по текущим ключам."""
+    c = creds()
+    if not c:
+        raise RuntimeError("AmoCRM не подключён — владелец ещё не ввёл ключи")
+    return f"https://{c['host']}", {"Authorization": f"Bearer {c['token']}"}
+
+
+async def verify(host: str, token: str) -> str:
+    """Проверяет пару адрес+токен ДО сохранения. Возвращает название аккаунта."""
+    url = f"https://{host}/api/v4/account"
+    async with httpx.AsyncClient(
+        timeout=30, headers={"Authorization": f"Bearer {token}"}
+    ) as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.json().get("name", host)
+
+
+# ================== ЗВОНКИ ==================
+
 async def fetch_recent_calls(limit: int = 50) -> list[dict]:
     """Возвращает последние примечания-звонки по сделкам и контактам."""
+    base, headers = _conn()
     calls: list[dict] = []
-    async with httpx.AsyncClient(timeout=60, headers=HEADERS) as client:
+    async with httpx.AsyncClient(timeout=60, headers=headers) as client:
         for entity in ENTITIES:
             params = {
                 "filter[note_type][0]": NOTE_TYPES[0],
@@ -27,7 +79,7 @@ async def fetch_recent_calls(limit: int = 50) -> list[dict]:
                 "order[updated_at]": "desc",
                 "limit": limit,
             }
-            r = await client.get(f"{BASE_URL}/api/v4/{entity}/notes", params=params)
+            r = await client.get(f"{base}/api/v4/{entity}/notes", params=params)
             if r.status_code == 204:
                 continue
             r.raise_for_status()
@@ -53,15 +105,16 @@ async def fetch_recent_calls(limit: int = 50) -> list[dict]:
 
 async def download_recording(call: dict, dest_dir: Path | None = None) -> Path:
     """Скачивает запись звонка по ссылке из примечания."""
+    base, headers = _conn()
     url = call["link"]
     if not url:
         raise ValueError("У звонка нет ссылки на запись")
     if url.startswith("/"):
-        url = BASE_URL + url
+        url = base + url
 
     dest = (dest_dir or TMP_DIR) / f"amo_call_{call['note_id']}.mp3"
     async with httpx.AsyncClient(
-        timeout=300, follow_redirects=True, headers=HEADERS
+        timeout=300, follow_redirects=True, headers=headers
     ) as client:
         r = await client.get(url)
         r.raise_for_status()
@@ -85,11 +138,23 @@ async def download_recording(call: dict, dest_dir: Path | None = None) -> Path:
 
 def entity_url(call: dict) -> str:
     """Ссылка на карточку сделки/контакта в AmoCRM."""
+    c = creds()
+    if not c:
+        return ""
+    base = f"https://{c['host']}"
     path = "leads/detail" if call["entity"] == "leads" else "contacts/detail"
-    return f"{BASE_URL}/{path}/{call['entity_id']}"
+    return f"{base}/{path}/{call['entity_id']}"
 
+
+# ================== СОТРУДНИКИ ==================
 
 _users_cache: dict[int, str] = {}
+
+
+def reset_cache() -> None:
+    """Сбрасываем кэш сотрудников (например, после смены аккаунта)."""
+    global _users_cache
+    _users_cache = {}
 
 
 async def get_users(force: bool = False) -> dict[int, str]:
@@ -97,8 +162,9 @@ async def get_users(force: bool = False) -> dict[int, str]:
     global _users_cache
     if _users_cache and not force:
         return _users_cache
-    async with httpx.AsyncClient(timeout=30, headers=HEADERS) as client:
-        r = await client.get(f"{BASE_URL}/api/v4/users", params={"limit": 250})
+    base, headers = _conn()
+    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
+        r = await client.get(f"{base}/api/v4/users", params={"limit": 250})
         r.raise_for_status()
         users = r.json().get("_embedded", {}).get("users", [])
     _users_cache = {u["id"]: u.get("name") or f"Сотрудник {u['id']}" for u in users}
@@ -107,7 +173,9 @@ async def get_users(force: bool = False) -> dict[int, str]:
 
 async def check_connection() -> str:
     """Проверка токена: возвращает название аккаунта."""
-    async with httpx.AsyncClient(timeout=30, headers=HEADERS) as client:
-        r = await client.get(f"{BASE_URL}/api/v4/account")
+    base, headers = _conn()
+    async with httpx.AsyncClient(timeout=30, headers=headers) as client:
+        r = await client.get(f"{base}/api/v4/account")
         r.raise_for_status()
-        return r.json().get("name", AMO_SUBDOMAIN)
+        c = creds() or {}
+        return r.json().get("name", c.get("host", ""))

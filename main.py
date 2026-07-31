@@ -22,21 +22,22 @@ import state
 from analyzer import (
     analyze_transcript,
     extract_metrics,
+    extract_summary,
     report_excerpt,
     team_report,
     uz_document,
     uz_tz,
 )
 from config import (
+    AMO_DEFAULT_HOST,
     AUDIO_DIR,
     MANAGER_WHITELIST,
     MIN_CALL_DURATION,
     POLL_INTERVAL,
     TELEGRAM_BOT_TOKEN,
     TMP_DIR,
-    amo_enabled,
 )
-from i18n import t
+from i18n import t, LANGS, LANG_NAMES
 from transcriber import transcribe
 from preprocess import preprocess
 
@@ -108,6 +109,18 @@ def manager_allowed(name: str) -> bool:
     return any(w.lower() in low for w in MANAGER_WHITELIST)
 
 
+def lang_row(lang: str | None = None) -> list[InlineKeyboardButton]:
+    """Ряд кнопок выбора языка (по кнопке на каждый язык). Текущий помечаем точкой."""
+    cur = lang or state.get_lang()
+    return [
+        InlineKeyboardButton(
+            text=("• " if code == cur else "") + LANG_NAMES[code],
+            callback_data=f"setlang:{code}",
+        )
+        for code in LANGS
+    ]
+
+
 def main_menu_kb(lang: str | None = None) -> InlineKeyboardMarkup:
     lang = lang or state.get_lang()
     return InlineKeyboardMarkup(
@@ -115,9 +128,16 @@ def main_menu_kb(lang: str | None = None) -> InlineKeyboardMarkup:
             [InlineKeyboardButton(text=t(lang, "btn_employees"), callback_data="mgrs")],
             [InlineKeyboardButton(text=t(lang, "btn_daily"), callback_data="daily")],
             [InlineKeyboardButton(text=t(lang, "btn_stats"), callback_data="stats")],
-            [InlineKeyboardButton(text=t(lang, "btn_lang"), callback_data="lang")],
+            lang_row(lang),
         ]
     )
+
+
+def lang_kb(lang: str | None = None) -> InlineKeyboardMarkup:
+    """Клавиатура только с выбором языка — вешаем на мастер подключения,
+    чтобы язык можно было переключить в любой момент, ещё до появления меню."""
+    lang = lang or state.get_lang()
+    return InlineKeyboardMarkup(inline_keyboard=[lang_row(lang)])
 
 
 def back_kb(callback_data: str = "mgrs", text: str = "⬅️ Назад") -> InlineKeyboardMarkup:
@@ -135,13 +155,18 @@ def menu_text(lang: str | None = None) -> str:
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     owner = state.get_owner()
+    lang = state.get_lang()
     if owner is None:
         state.set_owner(message.chat.id)
-        await message.answer("✅ Вы назначены владельцем бота.")
+        await message.answer(t(lang, "owner_assigned"))
     elif owner != message.chat.id:
-        await message.answer("⛔ Бот приватный и уже привязан к другому пользователю.")
+        await message.answer(t(lang, "private_taken"))
         return
-    await message.answer(menu_text(), reply_markup=main_menu_kb())
+    # первый вход владельца: пока amoCRM не подключён — ведём через мастер ввода ключей
+    if not amocrm.is_configured():
+        await begin_amo_setup(message.chat.id)
+        return
+    await message.answer(menu_text(lang), reply_markup=main_menu_kb(lang))
 
 
 @dp.message(Command("menu"))
@@ -155,20 +180,89 @@ async def cmd_menu(message: Message) -> None:
 async def cmd_status(message: Message) -> None:
     if not is_owner_chat(message.chat.id):
         return
-    if amo_enabled():
+    lang = state.get_lang()
+    if amocrm.is_configured():
         try:
             name = await amocrm.check_connection()
-            amo_line = f"🟢 AmoCRM подключён: {name} (проверка каждые {POLL_INTERVAL} сек)"
+            amo_line = t(lang, "status_amo_ok", name=name, sec=POLL_INTERVAL)
         except Exception as e:
-            amo_line = f"🔴 AmoCRM: ошибка подключения — {e}"
+            amo_line = t(lang, "status_amo_err", err=str(e))
     else:
-        amo_line = "⚪ AmoCRM не подключён (ручной режим). Добавьте AMO_SUBDOMAIN и AMO_ACCESS_TOKEN в файл .env"
+        amo_line = t(lang, "status_amo_off")
     await message.answer(
-        f"📡 Статус бота\n\n{amo_line}\n"
-        f"⏱ Минимальная длительность звонка: {MIN_CALL_DURATION} сек\n"
-        f"💾 Звонков в базе: {db.stats_for()['total']}",
-        reply_markup=main_menu_kb(),
+        t(lang, "status_body", amo=amo_line, sec=MIN_CALL_DURATION, n=db.stats_for()["total"]),
+        reply_markup=main_menu_kb(lang),
     )
+
+
+# ================== ПОДКЛЮЧЕНИЕ AMOCRM (мастер ввода ключей) ==================
+
+# порядок шагов мастера; на каждый шаг владелец шлёт одно сообщение.
+# Адрес кабинета не спрашиваем — аккаунт один и тот же (AMO_DEFAULT_HOST).
+AMO_STEPS = ["secret", "integration_id", "token"]
+
+
+def setup_step_text(step: str, lang: str) -> str:
+    """Текст текущего шага мастера на нужном языке (для шага 1 — с вступлением)."""
+    intro = t(lang, "amo_intro") + "\n\n" if step == "secret" else ""
+    return intro + t(lang, "amo_" + step)
+
+
+@dp.message(Command("connect"))
+async def cmd_connect(message: Message) -> None:
+    if not is_owner_chat(message.chat.id):
+        return
+    await begin_amo_setup(message.chat.id)
+
+
+@dp.message(Command("til", "language", "lang"))
+async def cmd_lang(message: Message) -> None:
+    """Показать выбор языка — работает в ЛЮБОЙ момент (и в мастере, и в меню)."""
+    if not is_owner_chat(message.chat.id):
+        return
+    lang = state.get_lang()
+    await message.answer(t(lang, "choose_lang"), reply_markup=lang_kb(lang))
+
+
+async def begin_amo_setup(chat_id: int) -> None:
+    state.set_setup({"step": "secret"})
+    lang = state.get_lang()
+    await bot.send_message(
+        chat_id, setup_step_text("secret", lang), reply_markup=lang_kb(lang)
+    )
+
+
+async def handle_amo_setup(message: Message, setup: dict) -> None:
+    """Ловит очередное значение мастера. Когда собраны все 4 — проверяет и сохраняет."""
+    step = setup.get("step")
+    if step not in AMO_STEPS:
+        state.set_setup(None)
+        return
+    setup[step] = message.text.strip()
+    lang = state.get_lang()
+
+    idx = AMO_STEPS.index(step)
+    if idx + 1 < len(AMO_STEPS):
+        next_step = AMO_STEPS[idx + 1]
+        setup["step"] = next_step
+        state.set_setup(setup)
+        await message.answer(setup_step_text(next_step, lang), reply_markup=lang_kb(lang))
+        return
+
+    # все значения введены — аккаунт фиксированный, проверяем подключение
+    state.set_setup(None)
+    host = AMO_DEFAULT_HOST
+    token = setup.get("token", "")
+    status = await message.answer(t(lang, "amo_checking", host=host))
+    try:
+        name = await amocrm.verify(host, token)
+    except Exception as e:
+        await status.edit_text(t(lang, "amo_fail", host=host, err=str(e)))
+        return
+    state.set_amo(host, token, setup.get("secret", ""), setup.get("integration_id", ""))
+    amocrm.reset_cache()
+    await status.edit_text(t(lang, "amo_connected", name=name))
+    await message.answer(menu_text(lang), reply_markup=main_menu_kb(lang))
 
 
 # ================== МЕНЮ / КНОПКИ ==================
@@ -188,7 +282,7 @@ async def build_employee_entries() -> list[tuple[str, str, int]]:
     """
     db_rows = {str(r["manager_id"]): (r["manager_name"], r["cnt"]) for r in db.managers()}
     entries: list[tuple[str, str, int]] = []
-    if amo_enabled():
+    if amocrm.is_configured():
         try:
             users = await amocrm.get_users()
             for uid, name in users.items():
@@ -238,12 +332,38 @@ async def cb_managers(cb: CallbackQuery) -> None:
 
 # ================== ЯЗЫК + ПОИСК СОТРУДНИКА ==================
 
+def _next_lang(cur: str) -> str:
+    return LANGS[(LANGS.index(cur) + 1) % len(LANGS)] if cur in LANGS else "ru"
+
+
+async def _rerender_after_lang(cb: CallbackQuery, code: str) -> None:
+    """Перерисовать текущее сообщение (мастер или меню) на новом языке."""
+    setup = state.get_setup()
+    if setup:
+        await cb.message.edit_text(
+            setup_step_text(setup.get("step", "secret"), code), reply_markup=lang_kb(code)
+        )
+    else:
+        await cb.message.edit_text(menu_text(code), reply_markup=main_menu_kb(code))
+
+
+@dp.callback_query(F.data.startswith("setlang:"))
+async def cb_setlang(cb: CallbackQuery) -> None:
+    code = cb.data.split(":")[1]
+    if code not in LANGS:
+        code = "ru"
+    state.set_lang(code)
+    await cb.answer(t(code, "lang_switched"))
+    await _rerender_after_lang(cb, code)
+
+
 @dp.callback_query(F.data == "lang")
 async def cb_lang(cb: CallbackQuery) -> None:
-    new_lang = "uz" if state.get_lang() == "ru" else "ru"
-    state.set_lang(new_lang)
-    await cb.answer(t(new_lang, "lang_switched"))
-    await cb.message.edit_text(menu_text(new_lang), reply_markup=main_menu_kb(new_lang))
+    # запасной обработчик для старых кнопок-тумблеров: циклим язык по кругу
+    code = _next_lang(state.get_lang())
+    state.set_lang(code)
+    await cb.answer(t(code, "lang_switched"))
+    await _rerender_after_lang(cb, code)
 
 
 @dp.callback_query(F.data == "find")
@@ -281,13 +401,14 @@ async def run_employee_search(chat_id: int, query: str) -> None:
 async def cb_manager(cb: CallbackQuery) -> None:
     _, manager_id, page_s = cb.data.split(":")
     page = int(page_s)
+    lang = state.get_lang()
     total = db.count_for(manager_id)
     calls = db.calls_for(manager_id, offset=page * PAGE_SIZE, limit=PAGE_SIZE)
 
-    name = "Сотрудник"
+    name = t(lang, "mgr_default_name")
     if calls:
         name = db.get_call(calls[0]["id"])["manager_name"]
-    elif amo_enabled() and manager_id.isdigit():
+    elif amocrm.is_configured() and manager_id.isdigit():
         try:
             users = await amocrm.get_users()
             name = users.get(int(manager_id), name)
@@ -296,7 +417,7 @@ async def cb_manager(cb: CallbackQuery) -> None:
 
     # неразобранные звонки этого сотрудника из CRM (можно разобрать по нажатию)
     pending = []
-    if page == 0 and amo_enabled() and manager_id.isdigit():
+    if page == 0 and amocrm.is_configured() and manager_id.isdigit():
         try:
             crm_calls = await amocrm.fetch_recent_calls()
             pending = [
@@ -312,30 +433,26 @@ async def cb_manager(cb: CallbackQuery) -> None:
 
     if total:
         stats = db.stats_for(manager_id)
-        header = f"👨‍💼 {name}\n\n{db.format_stats(stats)}\n\n"
+        header = f"👨‍💼 {name}\n\n{db.format_stats(stats, lang)}\n\n"
     else:
-        header = f"👨‍💼 {name}\n\nРазобранных звонков пока нет.\n\n"
+        header = f"👨‍💼 {name}\n\n{t(lang, 'mgr_no_calls')}\n\n"
     if calls or pending:
-        header += (
-            "Выберите звонок (✅❌❓ — уже разобран: аудио + PDF, "
-            "⬜ — новый: разберу при нажатии):"
-        )
+        header += t(lang, "calls_pick_hint")
     else:
-        header += "Звонков с записью в CRM пока не видно."
+        header += t(lang, "calls_none_crm")
 
     kb = []
     for c in calls:
         emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
         score = f"{c['score']}/10" if c["score"] is not None else "—"
-        status_tag = db.CALL_STATUS_SHORT.get(c["call_status"], "") if c["call_status"] else ""
+        status_tag = db.status_short(c["call_status"], lang)
         status_str = f" • {status_tag}" if status_tag else ""
-        label = f"{emoji} {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {score}{status_str} • {c['phone'] or 'без номера'}"
+        label = f"{emoji} {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {score}{status_str} • {c['phone'] or t(lang, 'no_number')}"
         kb.append([InlineKeyboardButton(text=label[:60], callback_data=f"call:{c['id']}")])
     for c in pending:
-        cs = c["call_status"]
-        status_tag = db.CALL_STATUS_SHORT.get(cs, "") if cs else ""
+        status_tag = db.status_short(c["call_status"], lang)
         status_str = f" • {status_tag}" if status_tag else ""
-        label = f"⬜ {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])}{status_str} • {c['phone'] or 'без номера'}"
+        label = f"⬜ {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])}{status_str} • {c['phone'] or t(lang, 'no_number')}"
         kb.append(
             [InlineKeyboardButton(text=label[:60], callback_data=f"anlz:{c['note_id']}:{manager_id}")]
         )
@@ -347,8 +464,8 @@ async def cb_manager(cb: CallbackQuery) -> None:
         nav.append(InlineKeyboardButton(text="➡️", callback_data=f"mgr:{manager_id}:{page + 1}"))
     if nav:
         kb.append(nav)
-    kb.append([InlineKeyboardButton(text="📅 Выбрать дату", callback_data=f"dates:{manager_id}")])
-    kb.append([InlineKeyboardButton(text="👥 К сотрудникам", callback_data="mgrs")])
+    kb.append([InlineKeyboardButton(text=t(lang, "btn_pick_date"), callback_data=f"dates:{manager_id}")])
+    kb.append([InlineKeyboardButton(text=t(lang, "btn_back_employees"), callback_data="mgrs")])
 
     await cb.message.edit_text(header, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await cb.answer()
@@ -366,10 +483,11 @@ def _day_bounds(day_key: str) -> tuple[int, int]:
 @dp.callback_query(F.data.startswith("dates:"))
 async def cb_dates(cb: CallbackQuery) -> None:
     manager_id = cb.data.split(":")[1]
+    lang = state.get_lang()
     date_counts: dict[str, int] = dict(db.dates_for(manager_id))
 
     # добавляем даты неразобранных звонков из CRM
-    if amo_enabled() and manager_id.isdigit():
+    if amocrm.is_configured() and manager_id.isdigit():
         try:
             crm_calls = await amocrm.fetch_recent_calls()
             for c in crm_calls:
@@ -386,18 +504,18 @@ async def cb_dates(cb: CallbackQuery) -> None:
             log.error("Ошибка получения звонков CRM: %s", e)
 
     if not date_counts:
-        await cb.answer("Звонков пока нет")
+        await cb.answer(t(lang, "no_calls_yet"))
         return
 
     kb = []
     for key in sorted(date_counts, reverse=True)[:14]:
         d = datetime.strptime(key, "%Y%m%d")
-        label = f"📅 {d.strftime('%d.%m.%Y')} ({WEEKDAYS[d.weekday()]}) • {date_counts[key]} зв."
+        label = f"📅 {d.strftime('%d.%m.%Y')} ({t(lang, f'wd_{d.weekday()}')}) • {date_counts[key]} {t(lang, 'calls_short')}"
         kb.append([InlineKeyboardButton(text=label, callback_data=f"mgrd:{manager_id}:{key}")])
-    kb.append([InlineKeyboardButton(text="⬅️ К сотруднику", callback_data=f"mgr:{manager_id}:0")])
+    kb.append([InlineKeyboardButton(text=t(lang, "btn_to_employee"), callback_data=f"mgr:{manager_id}:0")])
 
     await cb.message.edit_text(
-        "📅 Выберите дату — покажу все разговоры за этот день:",
+        t(lang, "dates_pick"),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
     )
     await cb.answer()
@@ -406,13 +524,14 @@ async def cb_dates(cb: CallbackQuery) -> None:
 @dp.callback_query(F.data.startswith("mgrd:"))
 async def cb_manager_day(cb: CallbackQuery) -> None:
     _, manager_id, day_key = cb.data.split(":")
+    lang = state.get_lang()
     start_ts, end_ts = _day_bounds(day_key)
     day_label = datetime.strptime(day_key, "%Y%m%d").strftime("%d.%m.%Y")
 
     calls = db.calls_for_day(manager_id, start_ts, end_ts)
 
     pending = []
-    if amo_enabled() and manager_id.isdigit():
+    if amocrm.is_configured() and manager_id.isdigit():
         try:
             crm_calls = await amocrm.fetch_recent_calls()
             pending = [
@@ -428,11 +547,11 @@ async def cb_manager_day(cb: CallbackQuery) -> None:
         except Exception as e:
             log.error("Ошибка получения звонков CRM: %s", e)
 
-    name = "Сотрудник"
+    name = t(lang, "mgr_default_name")
     if calls:
         row = db.get_call(calls[0]["id"])
         name = row["manager_name"]
-    elif amo_enabled() and manager_id.isdigit():
+    elif amocrm.is_configured() and manager_id.isdigit():
         try:
             users = await amocrm.get_users()
             name = users.get(int(manager_id), name)
@@ -440,32 +559,29 @@ async def cb_manager_day(cb: CallbackQuery) -> None:
             pass
 
     if not calls and not pending:
-        await cb.answer(f"За {day_label} звонков нет")
+        await cb.answer(t(lang, "no_calls_day", day=day_label))
         return
 
     kb = []
     for c in calls:
         emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
         score = f"{c['score']}/10" if c["score"] is not None else "—"
-        status_tag = db.CALL_STATUS_SHORT.get(c["call_status"], "") if c["call_status"] else ""
+        status_tag = db.status_short(c["call_status"], lang)
         status_str = f" • {status_tag}" if status_tag else ""
-        label = f"{emoji} {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {score}{status_str} • {c['phone'] or 'без номера'}"
+        label = f"{emoji} {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])} • {score}{status_str} • {c['phone'] or t(lang, 'no_number')}"
         kb.append([InlineKeyboardButton(text=label[:60], callback_data=f"call:{c['id']}")])
     for c in pending[:20]:
-        cs = c["call_status"]
-        status_tag = db.CALL_STATUS_SHORT.get(cs, "") if cs else ""
+        status_tag = db.status_short(c["call_status"], lang)
         status_str = f" • {status_tag}" if status_tag else ""
-        label = f"⬜ {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])}{status_str} • {c['phone'] or 'без номера'}"
+        label = f"⬜ {fmt_dt(c['created_at'])} • {fmt_dur(c['duration'])}{status_str} • {c['phone'] or t(lang, 'no_number')}"
         kb.append(
             [InlineKeyboardButton(text=label[:60], callback_data=f"anlz:{c['note_id']}:{manager_id}")]
         )
-    kb.append([InlineKeyboardButton(text="📅 Другая дата", callback_data=f"dates:{manager_id}")])
-    kb.append([InlineKeyboardButton(text="⬅️ К сотруднику", callback_data=f"mgr:{manager_id}:0")])
+    kb.append([InlineKeyboardButton(text=t(lang, "btn_other_date"), callback_data=f"dates:{manager_id}")])
+    kb.append([InlineKeyboardButton(text=t(lang, "btn_to_employee"), callback_data=f"mgr:{manager_id}:0")])
 
     await cb.message.edit_text(
-        f"👨‍💼 {name} • 📅 {day_label}\n\n"
-        f"Разговоры за этот день ({len(calls) + len(pending)}):\n"
-        "✅❌❓ — разобраны, ⬜ — разберу при нажатии",
+        t(lang, "day_calls_header", name=name, day=day_label, n=len(calls) + len(pending)),
         reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
     )
     await cb.answer()
@@ -475,32 +591,31 @@ async def cb_manager_day(cb: CallbackQuery) -> None:
 async def cb_analyze(cb: CallbackQuery) -> None:
     _, note_id_s, manager_id = cb.data.split(":")
     note_id = int(note_id_s)
-    await cb.answer("Разбираю звонок...")
+    lang = state.get_lang()
+    await cb.answer(t(lang, "analyzing_short"))
 
     existing = db.find_by_note(note_id)
     if existing:
         await send_call_package(cb.message.chat.id, existing["id"])
         return
 
-    msg = await bot.send_message(
-        cb.message.chat.id, "🎧 Скачиваю запись, расшифровываю и готовлю PDF (1-2 минуты)..."
-    )
+    msg = await bot.send_message(cb.message.chat.id, t(lang, "downloading"))
     try:
         crm_calls = await amocrm.fetch_recent_calls()
         call = next((c for c in crm_calls if c["note_id"] == note_id), None)
         if call is None:
-            await msg.edit_text("❌ Звонок не найден в CRM (возможно, устарел). Откройте карточку сотрудника заново.")
+            await msg.edit_text(t(lang, "call_not_found_crm"))
             return
         state.mark_processed(note_id)
         row_id = await process_amo_call(call)
         if row_id is None:
-            await msg.edit_text("⚠️ Не удалось разобрать звонок (нет речи или ошибка записи).")
+            await msg.edit_text(t(lang, "analyze_failed"))
             return
         await msg.delete()
         await send_call_package(cb.message.chat.id, row_id)
     except Exception as e:
         log.exception("Ошибка разбора звонка %s", note_id)
-        await msg.edit_text(f"❌ Ошибка: {e}")
+        await msg.edit_text(t(lang, "error_generic", err=str(e)))
 
 
 async def _build_pdf(c, lang: str, body: str) -> Path | None:
@@ -508,16 +623,12 @@ async def _build_pdf(c, lang: str, body: str) -> Path | None:
     всё равно откроется текстом. Возвращает путь к готовому файлу."""
     if not body.strip():
         return None
-    title = (
-        f"Qo‘ng‘iroq tahlili — {c['manager_name']}"
-        if lang == "uz"
-        else f"Разбор звонка — {c['manager_name']}"
-    )
+    title = t(lang, "pdf_title", name=c["manager_name"])
     score = f"{c['score']}/10" if c["score"] is not None else "—"
-    status_label = db.CALL_STATUS_LABELS.get(c["call_status"], "") if c["call_status"] else ""
+    status_lbl = db.status_label(c["call_status"], lang)
     meta_lines = [
         f"{fmt_dt(c['created_at'])} • {c['direction'] or '—'} • {fmt_dur(c['duration'])}",
-        f"Ball/Оценка: {score}" + (f" • {status_label}" if status_label else ""),
+        f"{t(lang, 'pdf_score')}: {score}" + (f" • {status_lbl}" if status_lbl else ""),
     ]
     if c["phone"]:
         meta_lines.append(f"Tel: {c['phone']}")
@@ -532,15 +643,15 @@ async def _build_pdf(c, lang: str, body: str) -> Path | None:
 async def send_call_package(chat_id: int, call_id: int) -> None:
     """Аудио + PDF (полный разбор на выбранном языке) + текст-выжимка + кнопки."""
     c = db.get_call(call_id)
+    lang = state.get_lang()
     if not c:
-        await bot.send_message(chat_id, "Звонок не найден.")
+        await bot.send_message(chat_id, t(lang, "call_not_found"))
         return
 
-    lang = state.get_lang()
     emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
     score = f"{c['score']}/10" if c["score"] is not None else "—"
-    status_label = db.CALL_STATUS_LABELS.get(c["call_status"], "") if c["call_status"] else ""
-    status_str = f" • {status_label}" if status_label else ""
+    status_lbl = db.status_label(c["call_status"], lang)
+    status_str = f" • {status_lbl}" if status_lbl else ""
     caption_lines = [
         f"{emoji} {c['manager_name']} • {score}",
         f"📅 {fmt_dt(c['created_at'])} • {c['direction'] or '—'} • {fmt_dur(c['duration'])}{status_str}",
@@ -567,7 +678,7 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
         except Exception as e:
             log.error("Не удалось скачать запись повторно: %s", e)
     if not audio_sent:
-        await bot.send_message(chat_id, caption + "\n(аудиозапись недоступна)")
+        await bot.send_message(chat_id, caption + "\n" + t(lang, "audio_unavailable"))
 
     # 2. Готовим содержимое разбора на выбранном языке.
     #    uz: полный дословный диалог + ТЗ (uz_document, кэш в doc_full) и короткое ТЗ в чат.
@@ -592,9 +703,10 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
         inline_text = uz or ""
         if not pdf_body:
             pdf_body = inline_text or c["report"] or c["transcript"] or ""
-    else:  # ru
+    else:  # ru (и en, пока сам AI-разбор не переведён)
         pdf_body = c["report"] or c["transcript"] or ""
-        inline_text = c["report"] or ""
+        # в чат — только короткий вывод + совет; полный разбор с диалогом уходит в PDF
+        inline_text = extract_summary(c["report"]) if c["report"] else ""
 
     # 3. PDF-документ (если есть из чего собрать; ошибка сборки не ломает звонок)
     pdf_path = await _build_pdf(c, lang, pdf_body)
@@ -628,49 +740,52 @@ async def cb_call(cb: CallbackQuery) -> None:
 @dp.callback_query(F.data.startswith("txt:"))
 async def cb_transcript(cb: CallbackQuery) -> None:
     call_id = int(cb.data.split(":")[1])
+    lang = state.get_lang()
     c = db.get_call(call_id)
     if not c:
-        await cb.answer("Звонок не найден")
+        await cb.answer(t(lang, "call_not_found"))
         return
     await cb.answer()
-    text = c["transcript"] or "Текст расшифровки отсутствует."
+    text = c["transcript"] or t(lang, "transcript_empty")
     await send_long(
         cb.message.chat.id,
-        f"📃 Полный текст разговора (дословно, как записано):\n\n{text}",
-        reply_markup=back_kb(f"mgr:{c['manager_id']}:0", "⬅️ К звонкам сотрудника"),
+        t(lang, "transcript_title", text=text),
+        reply_markup=back_kb(f"mgr:{c['manager_id']}:0", t(lang, "btn_back_calls")),
     )
 
 
 @dp.callback_query(F.data.startswith("rep:"))
 async def cb_report(cb: CallbackQuery) -> None:
     call_id = int(cb.data.split(":")[1])
+    lang = state.get_lang()
     c = db.get_call(call_id)
     if not c:
-        await cb.answer("Звонок не найден")
+        await cb.answer(t(lang, "call_not_found"))
         return
     await cb.answer()
     await send_long(
         cb.message.chat.id,
-        c["report"] or "Отчёт отсутствует.",
-        reply_markup=back_kb(f"mgr:{c['manager_id']}:0", "⬅️ К звонкам сотрудника"),
+        c["report"] or t(lang, "report_empty"),
+        reply_markup=back_kb(f"mgr:{c['manager_id']}:0", t(lang, "btn_back_calls")),
     )
 
 
 @dp.callback_query(F.data == "stats")
 async def cb_stats(cb: CallbackQuery) -> None:
+    lang = state.get_lang()
     total_stats = db.stats_for()
-    lines = ["📊 Общая статистика отдела\n", db.format_stats(total_stats)]
+    lines = [t(lang, "stats_dept_title"), db.format_stats(total_stats, lang)]
     rows = [r for r in db.managers() if manager_allowed(r["manager_name"])]
     if rows:
-        lines.append("\n👥 По сотрудникам:")
+        lines.append(t(lang, "stats_by_employee"))
         for r in rows:
             s = db.stats_for(r["manager_id"])
-            avg = f", ср. балл {s['avg_score']}/10" if s["avg_score"] is not None else ""
+            avg = t(lang, "avg_score_suffix", x=s["avg_score"]) if s["avg_score"] is not None else ""
             lines.append(
-                f"• {r['manager_name']}: {s['total']} зв., "
+                f"• {r['manager_name']}: {s['total']} {t(lang, 'calls_short')}, "
                 f"✅{s['percent']['ok']}% ❌{s['percent']['fail']}% ❓{s['percent']['doubt']}%{avg}"
             )
-    await cb.message.edit_text("\n".join(lines), reply_markup=back_kb("menu", "⬅️ Меню"))
+    await cb.message.edit_text("\n".join(lines), reply_markup=back_kb("menu", t(lang, "btn_back_menu")))
     await cb.answer()
 
 
@@ -726,34 +841,32 @@ async def build_daily_report() -> str | None:
         )
 
     summaries = []
-    for c in calls[:25]:
+    for c in calls[:15]:
         summaries.append(
             f"— {c['manager_name']} • {fmt_dt(c['created_at'])} • {c['phone'] or 'без номера'}:\n"
-            f"{report_excerpt(c['report'] or '')}"
+            f"{report_excerpt(c['report'] or '', max_len=300)}"
         )
-    if len(calls) > 25:
-        summaries.append(f"(и ещё {len(calls) - 25} звонков — в выжимку не вошли)")
+    if len(calls) > 15:
+        summaries.append(f"(и ещё {len(calls) - 15} звонков — в выжимку не вошли)")
 
     return await team_report("\n".join(facts), "\n\n".join(summaries))
 
 
 @dp.callback_query(F.data == "daily")
 async def cb_daily(cb: CallbackQuery) -> None:
-    await cb.answer("Готовлю отчёт...")
-    msg = await bot.send_message(cb.message.chat.id, "📈 Собираю общий отчёт за день...")
+    lang = state.get_lang()
+    await cb.answer(t(lang, "preparing_report"))
+    msg = await bot.send_message(cb.message.chat.id, t(lang, "daily_building"))
     try:
         report = await build_daily_report()
         if report is None:
-            await msg.edit_text(
-                "За сегодня пока нет ни одного разобранного звонка — отчёт будет, "
-                "когда появятся звонки."
-            )
+            await msg.edit_text(t(lang, "daily_empty"))
             return
         await msg.delete()
-        await send_long(cb.message.chat.id, report, reply_markup=back_kb("menu", "📋 Меню"))
+        await send_long(cb.message.chat.id, report, reply_markup=back_kb("menu", t(lang, "btn_menu")))
     except Exception as e:
         log.exception("Ошибка отчёта за день")
-        await msg.edit_text(f"❌ Ошибка при построении отчёта: {e}")
+        await msg.edit_text(t(lang, "daily_error", err=str(e)))
 
 
 async def daily_report_loop() -> None:
@@ -769,7 +882,7 @@ async def daily_report_loop() -> None:
                 report = await build_daily_report()
                 state.set_last_daily(today)
                 if report:
-                    await bot.send_message(owner, "🌙 Автоматический отчёт за день:")
+                    await bot.send_message(owner, t(state.get_lang(), "daily_auto_header"))
                     await send_long(owner, report)
         except Exception as e:
             log.error("Ошибка автоотчёта: %s", e)
@@ -779,8 +892,9 @@ async def daily_report_loop() -> None:
 
 @dp.message(F.voice | F.audio | F.document)
 async def handle_file(message: Message) -> None:
+    lang = state.get_lang()
     if not is_owner_chat(message.chat.id):
-        await message.answer("⛔ Бот приватный. Отправьте /start, если вы владелец.")
+        await message.answer(t(lang, "private_bot"))
         return
 
     doc = message.document
@@ -789,22 +903,22 @@ async def handle_file(message: Message) -> None:
         await bot.download(doc, destination=path)
         transcript = path.read_text(encoding="utf-8", errors="ignore")
         path.unlink(missing_ok=True)
-        status = await message.answer("🧠 Провожу жёсткий аудит звонка...")
+        status = await message.answer(t(lang, "auditing"))
         try:
             await run_manual_analysis(message, transcript)
             await status.delete()
         except Exception as e:
             log.exception("Ошибка анализа txt")
-            await status.edit_text(f"❌ Ошибка: {e}")
+            await status.edit_text(t(lang, "error_generic", err=str(e)))
         return
 
     media = message.voice or message.audio or doc
     if doc and not (doc.mime_type or "").startswith("audio"):
-        await message.answer("Пришлите аудиофайл (mp3/wav/ogg/m4a), голосовое или .txt с расшифровкой.")
+        await message.answer(t(lang, "send_audio_hint"))
         return
 
     if media.file_size and media.file_size > 20 * 1024 * 1024:
-        await message.answer("⚠️ Файл больше 20 МБ — Telegram не даёт ботам скачивать такие файлы. Сожмите запись или пришлите частями.")
+        await message.answer(t(lang, "file_too_big"))
         return
 
     ext = ".ogg" if message.voice else ".mp3"
@@ -813,16 +927,16 @@ async def handle_file(message: Message) -> None:
         ext = "." + fname.rsplit(".", 1)[-1]
 
     path = AUDIO_DIR / f"manual_{media.file_unique_id}{ext}"
-    status = await message.answer("🎧 Получил запись. Расшифровываю...")
+    status = await message.answer(t(lang, "got_recording"))
     try:
         await bot.download(media, destination=path)
         path = preprocess(path)
         transcript = await transcribe(path)
         if len(transcript) < 30:
-            await status.edit_text("⚠️ В записи почти нет речи — нечего анализировать.")
+            await status.edit_text(t(lang, "no_speech"))
             path.unlink(missing_ok=True)
             return
-        await status.edit_text("🧠 Расшифровал. Провожу жёсткий аудит звонка...")
+        await status.edit_text(t(lang, "transcribed_auditing"))
         duration = (message.voice and message.voice.duration) or (
             message.audio and message.audio.duration
         ) or 0
@@ -830,13 +944,19 @@ async def handle_file(message: Message) -> None:
         await status.delete()
     except Exception as e:
         log.exception("Ошибка обработки файла")
-        await status.edit_text(f"❌ Ошибка: {e}")
+        await status.edit_text(t(lang, "error_generic", err=str(e)))
 
 
 @dp.message(F.text)
 async def handle_text(message: Message) -> None:
+    lang = state.get_lang()
     if not is_owner_chat(message.chat.id):
-        await message.answer("⛔ Бот приватный. Отправьте /start, если вы владелец.")
+        await message.answer(t(lang, "private_bot"))
+        return
+    # мастер подключения amoCRM: очередной текст — это значение шага (ключ/айди/токен/адрес)
+    setup = state.get_setup()
+    if setup:
+        await handle_amo_setup(message, setup)
         return
     text = message.text.strip()
     # режим поиска сотрудника: следующий текст трактуем как имя, а не как расшифровку
@@ -845,18 +965,15 @@ async def handle_text(message: Message) -> None:
         await run_employee_search(message.chat.id, text)
         return
     if len(text) < 100:
-        await message.answer(
-            "Пришлите запись звонка (аудио/голосовое) или полный текст расшифровки "
-            "(не короче 100 символов).\n\nМеню: /menu",
-        )
+        await message.answer(t(lang, "send_call_hint"))
         return
-    status = await message.answer("🧠 Провожу жёсткий аудит звонка...")
+    status = await message.answer(t(lang, "auditing"))
     try:
         await run_manual_analysis(message, text)
         await status.delete()
     except Exception as e:
         log.exception("Ошибка анализа текста")
-        await status.edit_text(f"❌ Ошибка: {e}")
+        await status.edit_text(t(lang, "error_generic", err=str(e)))
 
 
 async def run_manual_analysis(
@@ -881,10 +998,11 @@ async def run_manual_analysis(
         rec_link="",
         audio_path=str(audio_path) if audio_path else "",
     )
+    lang = state.get_lang()
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Аудио + ТЗ (узбекча)", callback_data=f"call:{row_id}")],
-            [InlineKeyboardButton(text="📋 Меню", callback_data="menu")],
+            [InlineKeyboardButton(text=t(lang, "btn_audio_review"), callback_data=f"call:{row_id}")],
+            [InlineKeyboardButton(text=t(lang, "btn_menu"), callback_data="menu")],
         ]
     )
     await send_long(message.chat.id, report, reply_markup=kb)
@@ -974,37 +1092,32 @@ async def process_amo_call(call: dict) -> int | None:
 
 
 async def amo_poller() -> None:
-    if not amo_enabled():
-        log.info("AmoCRM не настроен — работаю в ручном режиме (файлы/текст в боте).")
-        return
-    try:
-        name = await amocrm.check_connection()
-        log.info("AmoCRM подключён: %s", name)
-    except Exception as e:
-        log.error("AmoCRM: ошибка подключения — %s", e)
-        owner = state.get_owner()
-        if owner:
-            await bot.send_message(owner, f"🔴 AmoCRM: ошибка подключения — {e}")
-        return
-
-    if not state.amo_initialized():
-        try:
-            for call in await amocrm.fetch_recent_calls():
-                state.mark_processed(call["note_id"])
-            state.set_amo_initialized()
-            log.info("Первый запуск: старые звонки пропущены, слежу только за новыми.")
-        except Exception as e:
-            log.error("Ошибка инициализации AmoCRM: %s", e)
-
-    owner_warned = False
+    waiting_logged = False
     while True:
-        # пока никто не нажал /start — звонки не трогаем, чтобы отчёты не пропали
-        if state.get_owner() is None:
-            if not owner_warned:
-                log.info("Жду, пока владелец нажмёт /start в боте — звонки пока не обрабатываю.")
-                owner_warned = True
-            await asyncio.sleep(10)
+        # ждём, пока владелец подключит amoCRM (введёт ключи) и станет владельцем
+        if not amocrm.is_configured() or state.get_owner() is None:
+            if not waiting_logged:
+                log.info("Жду подключения amoCRM и владельца — звонки пока не трогаю.")
+                waiting_logged = True
+            await asyncio.sleep(5)
             continue
+        waiting_logged = False
+
+        # первый запуск на этом аккаунте: помечаем текущую историю обработанной,
+        # чтобы не вывалить владельцу все старые звонки разом (и при смене аккаунта тоже)
+        if not state.amo_initialized():
+            try:
+                name = await amocrm.check_connection()
+                log.info("AmoCRM подключён: %s", name)
+                for call in await amocrm.fetch_recent_calls():
+                    state.mark_processed(call["note_id"])
+                state.set_amo_initialized()
+                log.info("Старые звонки пропущены, слежу только за новыми.")
+            except Exception as e:
+                log.error("AmoCRM: ошибка подключения/инициализации — %s", e)
+                await asyncio.sleep(POLL_INTERVAL)
+            continue
+
         try:
             calls = await amocrm.fetch_recent_calls()
             users = {}

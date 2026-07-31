@@ -65,14 +65,18 @@ async def analyze_transcript(transcript: str, meta: str = "") -> str:
 
 async def team_report(facts: str, call_summaries: str) -> str:
     """Общий отчёт отдела за день."""
+    # Groq free-tier считает в TPM и вход, и запрошенный max_tokens — большой payload
+    # ловит 413. Режем выжимки и ограничиваем ответ, чтобы отчёт всегда собирался.
+    if len(call_summaries) > 6000:
+        call_summaries = call_summaries[:6000] + "\n…(часть выжимок обрезана под лимит модели)"
     user_message = (
         f"СТАТИСТИКА (посчитано точно):\n{facts}\n\n"
         f"ВЫЖИМКИ ИЗ АУДИТОВ ЗВОНКОВ ЗА ДЕНЬ:\n{call_summaries}"
     )
     if ANTHROPIC_API_KEY:
-        report = await _analyze_claude(user_message, TEAM_PROMPT)
+        report = await _analyze_claude(user_message, TEAM_PROMPT, max_tokens=2000)
     else:
-        report = await _analyze_openai(user_message, TEAM_PROMPT)
+        report = await _analyze_openai(user_message, TEAM_PROMPT, max_tokens=2000)
     return _sanitize(report)
 
 
@@ -275,6 +279,21 @@ def report_excerpt(report: str, max_len: int = 700) -> str:
 
     excerpt = "\n".join(parts) if parts else report
     return excerpt[:max_len]
+
+
+def extract_summary(report: str) -> str:
+    """Короткий вывод + совет для чата. Сам диалог и полный разбор идут в PDF,
+    в Telegram — только итог звонка и главный совет оператору."""
+    parts = []
+    for pat in (r"⭐\s*ОБЩАЯ ОЦЕНКА:.*", r"⏱\s*Итог разговора:.*"):
+        m = re.search(pat, report)
+        if m:
+            parts.append(m.group(0).strip())
+    m = re.search(r"💡[^➖]*", report, re.DOTALL)  # секция «СОВЕТ …»
+    if m:
+        parts.append(m.group(0).strip())
+    summary = "\n".join(parts).strip()
+    return summary or report_excerpt(report, max_len=500)
 
 
 # ---------------------------------------------------------------------------

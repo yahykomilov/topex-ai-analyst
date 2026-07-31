@@ -4,6 +4,10 @@ data/
 tmp/
 .claude/
 
+# локальные логи запуска бота
+launch_out.log
+launch_err.log
+
 # python
 __pycache__/
 *.pyc

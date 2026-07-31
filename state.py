@@ -69,6 +69,50 @@ def set_amo_initialized() -> None:
         _save()
 
 
+# ================== ПОДКЛЮЧЕНИЕ AMOCRM (владелец вводит ключи в боте) ==================
+
+def get_amo() -> dict | None:
+    """Ключи amoCRM, введённые владельцем. None, пока не подключён."""
+    a = _state.get("amo") or {}
+    if a.get("host") and a.get("token"):
+        return a
+    return None
+
+
+def set_amo(host: str, token: str, secret: str = "", integration_id: str = "") -> None:
+    """Сохраняет ключи и сбрасывает слежение — чтобы новый аккаунт не вывалил всю историю."""
+    with _lock:
+        _state["amo"] = {
+            "host": host,
+            "token": token,
+            "secret": secret,
+            "integration_id": integration_id,
+        }
+        _state["amo_initialized"] = False
+        _state["processed_notes"] = []
+        _save()
+
+
+def clear_amo() -> None:
+    with _lock:
+        _state.pop("amo", None)
+        _save()
+
+
+def get_setup() -> dict | None:
+    """Незавершённый ввод ключей владельцем (шаг + уже введённые значения)."""
+    return _state.get("amo_setup")
+
+
+def set_setup(data: dict | None) -> None:
+    with _lock:
+        if data is None:
+            _state.pop("amo_setup", None)
+        else:
+            _state["amo_setup"] = data
+        _save()
+
+
 # ================== ЯЗЫК ИНТЕРФЕЙСА (владелец переключает) ==================
 
 def get_lang() -> str:

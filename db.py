@@ -4,6 +4,7 @@ import sqlite3
 import threading
 
 from config import DATA_DIR
+import i18n
 
 DB_PATH = DATA_DIR / "calls.db"
 
@@ -207,14 +208,30 @@ def stats_for(manager_id: str | None = None) -> dict:
     }
 
 
-def format_stats(stats: dict) -> str:
+def status_label(code: int | None, lang: str = "ru") -> str:
+    """Полная метка статуса звонка amoCRM на выбранном языке ('' — если статуса нет)."""
+    if not code:
+        return ""
+    val = i18n.t(lang, f"cs_label_{code}")
+    return "" if val == f"cs_label_{code}" else val
+
+
+def status_short(code: int | None, lang: str = "ru") -> str:
+    """Короткая метка статуса звонка amoCRM на выбранном языке."""
+    if not code:
+        return ""
+    val = i18n.t(lang, f"cs_short_{code}")
+    return "" if val == f"cs_short_{code}" else val
+
+
+def format_stats(stats: dict, lang: str = "ru") -> str:
     c, p = stats["counts"], stats["percent"]
     lines = [
-        f"📞 Всего звонков: {stats['total']}",
-        f"✅ Успешные: {c['ok']} ({p['ok']}%)",
-        f"❌ Неуспешные: {c['fail']} ({p['fail']}%)",
-        f"❓ Под вопросом: {c['doubt']} ({p['doubt']}%)",
+        i18n.t(lang, "stats_total", n=stats["total"]),
+        i18n.t(lang, "stats_ok", n=c["ok"], p=p["ok"]),
+        i18n.t(lang, "stats_fail", n=c["fail"], p=p["fail"]),
+        i18n.t(lang, "stats_doubt", n=c["doubt"], p=p["doubt"]),
     ]
     if stats["avg_score"] is not None:
-        lines.append(f"⭐ Средний балл: {stats['avg_score']}/10")
+        lines.append(i18n.t(lang, "stats_avg", x=stats["avg_score"]))
     return "\n".join(lines)
