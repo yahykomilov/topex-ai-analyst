@@ -17,6 +17,7 @@ from aiogram.types import (
 
 import amocrm
 import db
+import pdf
 import state
 from analyzer import (
     analyze_transcript,
@@ -48,6 +49,9 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("bot")
+
+# fontTools при сборке PDF сыплет сотнями строк на каждый файл
+logging.getLogger("fontTools").setLevel(logging.WARNING)
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
@@ -451,6 +455,52 @@ async def cb_analyze(cb: CallbackQuery) -> None:
         await msg.edit_text(f"❌ Ошибка: {e}")
 
 
+PDF_SEPARATOR = "\n\n" + "-" * 60 + "\n\n"
+
+
+def build_call_pdf(call, uz_doc: str | None) -> Path:
+    """PDF со всем разбором: диалог по ролям, оценка, советы AI и ТЗ на узбекском."""
+    score = f"{call['score']}/10" if call["score"] is not None else "—"
+    status_label = (
+        db.CALL_STATUS_LABELS.get(call["call_status"], "") if call["call_status"] else ""
+    )
+    meta_lines = [
+        f"Сотрудник: {call['manager_name']}",
+        f"Дата: {fmt_dt(call['created_at'])} • {call['direction'] or '—'} • {fmt_dur(call['duration'])}",
+        f"Оценка: {score}{f' • {status_label}' if status_label else ''}",
+    ]
+    if call["phone"]:
+        meta_lines.append(f"Телефон клиента: {call['phone']}")
+    if call["card_url"]:
+        meta_lines.append(f"Карточка в CRM: {call['card_url']}")
+
+    sections = [call["report"] or "Отчёт отсутствует."]
+    if uz_doc:
+        sections.append(f"ХОДИМ УЧУН ТЗ (O'ZBEKCHA)\n\n{uz_doc}")
+
+    # имя файла — только из id: manager_name приходит из CRM, в путь его не пускаем
+    dest = TMP_DIR / f"call_{call['id']}.pdf"
+    return pdf.make_call_pdf(
+        dest,
+        "Разбор звонка",
+        meta_lines,
+        PDF_SEPARATOR.join(sections),
+    )
+
+
+async def send_call_pdf(chat_id: int, call, uz_doc: str | None) -> None:
+    path = None
+    try:
+        path = await asyncio.to_thread(build_call_pdf, call, uz_doc)
+        await bot.send_document(chat_id, FSInputFile(path))
+    except Exception as e:
+        log.exception("Не удалось собрать PDF для звонка %s", call["id"])
+        await bot.send_message(chat_id, f"⚠️ PDF-отчёт собрать не удалось: {e}")
+    finally:
+        if path:
+            Path(path).unlink(missing_ok=True)
+
+
 async def send_call_package(chat_id: int, call_id: int) -> None:
     """Аудио + PDF (диалог на узбекском + ТЗ) + кнопки."""
     c = db.get_call(call_id)
@@ -499,6 +549,9 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
         except Exception as e:
             log.exception("Ошибка генерации ТЗ")
             uz = None
+
+    # 3. PDF со всем разбором
+    await send_call_pdf(chat_id, c, uz)
 
     kb = back_kb(f"mgr:{c['manager_id']}:0", "⬅️ К звонкам сотрудника")
     if uz:
