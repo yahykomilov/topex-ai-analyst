@@ -34,6 +34,16 @@ def set_owner(chat_id: int) -> None:
         _save()
 
 
+def get_lang() -> str:
+    return _state.get("lang") or "ru"
+
+
+def set_lang(lang: str) -> None:
+    with _lock:
+        _state["lang"] = lang
+        _save()
+
+
 def is_processed(note_id: int) -> bool:
     return note_id in _state.get("processed_notes", [])
 

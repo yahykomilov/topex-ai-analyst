@@ -45,27 +45,9 @@ for _col, _typ in (
 _conn.commit()
 
 VERDICT_EMOJI = {"ok": "✅", "fail": "❌", "doubt": "❓"}
-VERDICT_LABEL = {"ok": "Успешные", "fail": "Неуспешные", "doubt": "Под вопросом"}
 
-# amoCRM call_status: 4=разговор состоялся, 5=пропущенный, 6=недозвон, 7=нет соединения
-CALL_STATUS_LABELS = {
-    1: "📞 Планируется",
-    2: "📅 Запланирован",
-    3: "🔄 Совершён",
-    4: "✅ Разговор",
-    5: "📳 Пропущен",
-    6: "❌ Недозвон",
-    7: "🚫 Нет соединения",
-}
-CALL_STATUS_SHORT = {
-    1: "план",
-    2: "запл.",
-    3: "сов.",
-    4: "разг.",
-    5: "проп.",
-    6: "недозв.",
-    7: "нет соед.",
-}
+# Подписи вердиктов и статусов звонка (amoCRM call_status: 4=разговор,
+# 5=пропущенный, 6=недозвон, 7=нет соединения) переводятся — они в i18n.py
 
 
 def save_call(**kw) -> int:
@@ -197,16 +179,3 @@ def stats_for(manager_id: str | None = None) -> dict:
         },
         "avg_score": round(avg, 1) if avg is not None else None,
     }
-
-
-def format_stats(stats: dict) -> str:
-    c, p = stats["counts"], stats["percent"]
-    lines = [
-        f"📞 Всего звонков: {stats['total']}",
-        f"✅ Успешные: {c['ok']} ({p['ok']}%)",
-        f"❌ Неуспешные: {c['fail']} ({p['fail']}%)",
-        f"❓ Под вопросом: {c['doubt']} ({p['doubt']}%)",
-    ]
-    if stats["avg_score"] is not None:
-        lines.append(f"⭐ Средний балл: {stats['avg_score']}/10")
-    return "\n".join(lines)
