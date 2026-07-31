@@ -161,14 +161,16 @@ async def _gemini_transcribe(audio_path: Path) -> str:
         # Загружаем файл в Gemini (синхронно, но быстро)
         file = await asyncio.to_thread(gemini_client.files.upload, file=audio_path)
 
-        # Ждём обработки (polling)
-        while True:
+        # Ждём обработки (polling) — не дольше ~30 сек, иначе можно зависнуть навсегда
+        for _ in range(30):
             meta = await asyncio.to_thread(gemini_client.files.get, name=file.name)
             if meta.state.name == "ACTIVE":
                 break
             if meta.state.name == "FAILED":
                 raise RuntimeError(f"Gemini file processing failed: {meta}")
             await asyncio.sleep(1)
+        else:
+            raise RuntimeError("Gemini: файл не перешёл в ACTIVE за 30 сек")
 
         prompt = (
             "Transcribe this audio word for word in the original spoken language. "

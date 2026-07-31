@@ -53,9 +53,17 @@ def preprocess(input_path: Path, output_path: Path | None = None) -> Path:
         subprocess.run(cmd, check=True, capture_output=True, timeout=120)
         size_kb = output_path.stat().st_size // 1024
         log.info("Готово: %s (%d КБ)", output_path.name, size_kb)
-    except subprocess.CalledProcessError as e:
+    except FileNotFoundError:
+        # ffmpeg не установлен (частый случай на свежем сервере) — не валимся,
+        # отдаём оригинал: распознавание работает и без предобработки.
+        log.warning("ffmpeg не найден — пропускаю предобработку, использую оригинал: %s",
+                     input_path.name)
+        return input_path
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        stderr = getattr(e, "stderr", None)
+        detail = stderr[:200].decode(errors="replace") if stderr else "?"
         log.warning("Предобработка не удалась (%s), использую оригинал: %s",
-                     e.stderr[:200].decode(errors="replace") if e.stderr else "?", input_path.name)
+                     detail, input_path.name)
         return input_path
 
     return output_path

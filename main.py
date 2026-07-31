@@ -929,7 +929,7 @@ async def process_amo_call(call: dict) -> int | None:
             created_at=call["created_at"] or int(time.time()),
             transcript="",
             report="",
-            score=0,
+            score=None,  # недозвон/пропущенный — разговора не было, не портим средний балл нулём
             verdict="fail",
             call_status=call_status,
             card_url=card_url,
