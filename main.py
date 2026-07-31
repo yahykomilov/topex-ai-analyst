@@ -17,12 +17,14 @@ from aiogram.types import (
 
 import amocrm
 import db
+import pdf
 import state
 from analyzer import (
     analyze_transcript,
     extract_metrics,
     report_excerpt,
     team_report,
+    uz_document,
     uz_tz,
 )
 from config import (
@@ -34,6 +36,7 @@ from config import (
     TMP_DIR,
     amo_enabled,
 )
+from i18n import t
 from transcriber import transcribe
 from preprocess import preprocess
 
@@ -105,12 +108,14 @@ def manager_allowed(name: str) -> bool:
     return any(w.lower() in low for w in MANAGER_WHITELIST)
 
 
-def main_menu_kb() -> InlineKeyboardMarkup:
+def main_menu_kb(lang: str | None = None) -> InlineKeyboardMarkup:
+    lang = lang or state.get_lang()
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [InlineKeyboardButton(text="👥 Сотрудники", callback_data="mgrs")],
-            [InlineKeyboardButton(text="📈 Отчёт за день", callback_data="daily")],
-            [InlineKeyboardButton(text="📊 Общая статистика", callback_data="stats")],
+            [InlineKeyboardButton(text=t(lang, "btn_employees"), callback_data="mgrs")],
+            [InlineKeyboardButton(text=t(lang, "btn_daily"), callback_data="daily")],
+            [InlineKeyboardButton(text=t(lang, "btn_stats"), callback_data="stats")],
+            [InlineKeyboardButton(text=t(lang, "btn_lang"), callback_data="lang")],
         ]
     )
 
@@ -121,14 +126,8 @@ def back_kb(callback_data: str = "mgrs", text: str = "⬅️ Назад") -> Inl
     )
 
 
-MENU_TEXT = (
-    "📋 Главное меню\n\n"
-    "👥 Сотрудники — выберите менеджера, посмотрите его звонки, разбор AI и статистику.\n"
-    "📈 Отчёт за день — сколько клиентов обслужили, топ дня, системные ошибки и ТЗ каждому сотруднику (автоматически приходит в 20:00).\n"
-    "📊 Общая статистика — итоги по всему отделу.\n\n"
-    "🎧 Также можно просто прислать сюда запись звонка или текст расшифровки — "
-    "я сразу сделаю аудит."
-)
+def menu_text(lang: str | None = None) -> str:
+    return t(lang or state.get_lang(), "menu_title")
 
 
 # ================== КОМАНДЫ ==================
@@ -142,14 +141,14 @@ async def cmd_start(message: Message) -> None:
     elif owner != message.chat.id:
         await message.answer("⛔ Бот приватный и уже привязан к другому пользователю.")
         return
-    await message.answer(MENU_TEXT, reply_markup=main_menu_kb())
+    await message.answer(menu_text(), reply_markup=main_menu_kb())
 
 
 @dp.message(Command("menu"))
 async def cmd_menu(message: Message) -> None:
     if not is_owner_chat(message.chat.id):
         return
-    await message.answer(MENU_TEXT, reply_markup=main_menu_kb())
+    await message.answer(menu_text(), reply_markup=main_menu_kb())
 
 
 @dp.message(Command("status"))
@@ -176,13 +175,17 @@ async def cmd_status(message: Message) -> None:
 
 @dp.callback_query(F.data == "menu")
 async def cb_menu(cb: CallbackQuery) -> None:
-    await cb.message.edit_text(MENU_TEXT, reply_markup=main_menu_kb())
+    state.set_awaiting_search(False)
+    await cb.message.edit_text(menu_text(), reply_markup=main_menu_kb())
     await cb.answer()
 
 
-@dp.callback_query(F.data == "mgrs")
-async def cb_managers(cb: CallbackQuery) -> None:
-    # сотрудники = все пользователи AmoCRM + все, у кого есть звонки в базе
+async def build_employee_entries() -> list[tuple[str, str, int]]:
+    """Сотрудники = все пользователи AmoCRM + все, у кого есть звонки в базе.
+
+    Отсортированы по числу разобранных звонков (убыв.). Используется и в списке
+    сотрудников, и в поиске по имени.
+    """
     db_rows = {str(r["manager_id"]): (r["manager_name"], r["cnt"]) for r in db.managers()}
     entries: list[tuple[str, str, int]] = []
     if amo_enabled():
@@ -197,32 +200,81 @@ async def cb_managers(cb: CallbackQuery) -> None:
     for mid, (name, cnt) in db_rows.items():
         if manager_allowed(name):
             entries.append((mid, name, cnt))
+    entries.sort(key=lambda x: -x[2])
+    return entries
 
+
+def employees_kb(
+    entries: list[tuple[str, str, int]], lang: str, with_search: bool = True
+) -> InlineKeyboardMarkup:
+    kb = [
+        [InlineKeyboardButton(text=f"👨‍💼 {name} ({cnt})", callback_data=f"mgr:{mid}:0")]
+        for mid, name, cnt in entries
+    ]
+    if with_search:
+        kb.append([InlineKeyboardButton(text=t(lang, "btn_search"), callback_data="find")])
+    kb.append([InlineKeyboardButton(text=t(lang, "btn_back_menu"), callback_data="menu")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+@dp.callback_query(F.data == "mgrs")
+async def cb_managers(cb: CallbackQuery) -> None:
+    state.set_awaiting_search(False)
+    lang = state.get_lang()
+    entries = await build_employee_entries()
     if not entries:
         await cb.message.edit_text(
-            "Пока нет ни сотрудников, ни разобранных звонков.\n\n"
-            "Пришлите запись звонка сюда — или дождитесь нового звонка из AmoCRM.",
-            reply_markup=back_kb("menu", "⬅️ Меню"),
+            t(lang, "employees_empty"),
+            reply_markup=back_kb("menu", t(lang, "btn_back_menu")),
         )
         await cb.answer()
         return
-
-    entries.sort(key=lambda x: -x[2])
-    kb = [
-        [
-            InlineKeyboardButton(
-                text=f"👨‍💼 {name} ({cnt})",
-                callback_data=f"mgr:{mid}:0",
-            )
-        ]
-        for mid, name, cnt in entries
-    ]
-    kb.append([InlineKeyboardButton(text="⬅️ Меню", callback_data="menu")])
     await cb.message.edit_text(
-        "👥 Сотрудники (в скобках — количество разобранных звонков):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        t(lang, "employees_title"),
+        reply_markup=employees_kb(entries, lang),
     )
     await cb.answer()
+
+
+# ================== ЯЗЫК + ПОИСК СОТРУДНИКА ==================
+
+@dp.callback_query(F.data == "lang")
+async def cb_lang(cb: CallbackQuery) -> None:
+    new_lang = "uz" if state.get_lang() == "ru" else "ru"
+    state.set_lang(new_lang)
+    await cb.answer(t(new_lang, "lang_switched"))
+    await cb.message.edit_text(menu_text(new_lang), reply_markup=main_menu_kb(new_lang))
+
+
+@dp.callback_query(F.data == "find")
+async def cb_find(cb: CallbackQuery) -> None:
+    lang = state.get_lang()
+    state.set_awaiting_search(True)
+    await cb.answer()
+    await cb.message.answer(
+        t(lang, "search_prompt"),
+        reply_markup=back_kb("mgrs", t(lang, "btn_back_employees")),
+    )
+
+
+async def run_employee_search(chat_id: int, query: str) -> None:
+    """Ищет сотрудников по подстроке имени и показывает совпадения кнопками."""
+    lang = state.get_lang()
+    q = query.strip().lower()
+    entries = await build_employee_entries()
+    matched = [e for e in entries if q in e[1].lower()]
+    if not matched:
+        await bot.send_message(
+            chat_id,
+            t(lang, "search_none") + query,
+            reply_markup=back_kb("mgrs", t(lang, "btn_back_employees")),
+        )
+        return
+    await bot.send_message(
+        chat_id,
+        t(lang, "search_title", q=query),
+        reply_markup=employees_kb(matched, lang, with_search=False),
+    )
 
 
 @dp.callback_query(F.data.startswith("mgr:"))
@@ -451,13 +503,40 @@ async def cb_analyze(cb: CallbackQuery) -> None:
         await msg.edit_text(f"❌ Ошибка: {e}")
 
 
+async def _build_pdf(c, lang: str, body: str) -> Path | None:
+    """Собирает PDF по звонку. При любой ошибке (нет шрифта и т.п.) — None, звонок
+    всё равно откроется текстом. Возвращает путь к готовому файлу."""
+    if not body.strip():
+        return None
+    title = (
+        f"Qo‘ng‘iroq tahlili — {c['manager_name']}"
+        if lang == "uz"
+        else f"Разбор звонка — {c['manager_name']}"
+    )
+    score = f"{c['score']}/10" if c["score"] is not None else "—"
+    status_label = db.CALL_STATUS_LABELS.get(c["call_status"], "") if c["call_status"] else ""
+    meta_lines = [
+        f"{fmt_dt(c['created_at'])} • {c['direction'] or '—'} • {fmt_dur(c['duration'])}",
+        f"Ball/Оценка: {score}" + (f" • {status_label}" if status_label else ""),
+    ]
+    if c["phone"]:
+        meta_lines.append(f"Tel: {c['phone']}")
+    dest = TMP_DIR / f"call_{c['id']}.pdf"
+    try:
+        return await asyncio.to_thread(pdf.make_call_pdf, dest, title, meta_lines, body)
+    except Exception:
+        log.exception("Не удалось собрать PDF для звонка %s", c["id"])
+        return None
+
+
 async def send_call_package(chat_id: int, call_id: int) -> None:
-    """Аудио + PDF (диалог на узбекском + ТЗ) + кнопки."""
+    """Аудио + PDF (полный разбор на выбранном языке) + текст-выжимка + кнопки."""
     c = db.get_call(call_id)
     if not c:
         await bot.send_message(chat_id, "Звонок не найден.")
         return
 
+    lang = state.get_lang()
     emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
     score = f"{c['score']}/10" if c["score"] is not None else "—"
     status_label = db.CALL_STATUS_LABELS.get(c["call_status"], "") if c["call_status"] else ""
@@ -490,21 +569,53 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
     if not audio_sent:
         await bot.send_message(chat_id, caption + "\n(аудиозапись недоступна)")
 
-    # 2. Короткое ТЗ на узбекском (генерируем один раз, потом берём из базы)
-    uz = c["uz_doc"]
-    if not uz and c["transcript"]:
-        try:
-            uz = await uz_tz(c["transcript"])
-            db.set_uz_doc(call_id, uz)
-        except Exception as e:
-            log.exception("Ошибка генерации ТЗ")
-            uz = None
+    # 2. Готовим содержимое разбора на выбранном языке.
+    #    uz: полный дословный диалог + ТЗ (uz_document, кэш в doc_full) и короткое ТЗ в чат.
+    #    ru: готовый аудит (report) — он уже на русском, лишних вызовов LLM нет.
+    inline_text = ""
+    pdf_body = ""
+    if lang == "uz":
+        pdf_body = c["doc_full"] or ""
+        if not pdf_body and c["transcript"]:
+            try:
+                pdf_body = await uz_document(c["transcript"])
+                db.set_doc_full(call_id, pdf_body)
+            except Exception:
+                log.exception("Ошибка генерации uz-документа")
+        uz = c["uz_doc"]
+        if not uz and c["transcript"]:
+            try:
+                uz = await uz_tz(c["transcript"])
+                db.set_uz_doc(call_id, uz)
+            except Exception:
+                log.exception("Ошибка генерации ТЗ")
+        inline_text = uz or ""
+        if not pdf_body:
+            pdf_body = inline_text or c["report"] or c["transcript"] or ""
+    else:  # ru
+        pdf_body = c["report"] or c["transcript"] or ""
+        inline_text = c["report"] or ""
 
-    kb = back_kb(f"mgr:{c['manager_id']}:0", "⬅️ К звонкам сотрудника")
-    if uz:
-        await send_long(chat_id, uz, reply_markup=kb)
+    # 3. PDF-документ (если есть из чего собрать; ошибка сборки не ломает звонок)
+    pdf_path = await _build_pdf(c, lang, pdf_body)
+    if pdf_path:
+        try:
+            await bot.send_document(
+                chat_id,
+                FSInputFile(pdf_path, filename=f"call_{c['id']}.pdf"),
+                caption=t(lang, "pdf_caption"),
+            )
+        except Exception:
+            log.exception("Не удалось отправить PDF звонка %s", c["id"])
+        finally:
+            pdf_path.unlink(missing_ok=True)
+
+    # 4. Текст-выжимка в чат + кнопка назад
+    kb = back_kb(f"mgr:{c['manager_id']}:0", t(lang, "btn_back_calls"))
+    if inline_text:
+        await send_long(chat_id, inline_text, reply_markup=kb)
     else:
-        await bot.send_message(chat_id, "ТЗ недоступно для этого звонка.", reply_markup=kb)
+        await bot.send_message(chat_id, t(lang, "doc_unavailable"), reply_markup=kb)
 
 
 @dp.callback_query(F.data.startswith("call:"))
@@ -728,6 +839,11 @@ async def handle_text(message: Message) -> None:
         await message.answer("⛔ Бот приватный. Отправьте /start, если вы владелец.")
         return
     text = message.text.strip()
+    # режим поиска сотрудника: следующий текст трактуем как имя, а не как расшифровку
+    if state.is_awaiting_search():
+        state.set_awaiting_search(False)
+        await run_employee_search(message.chat.id, text)
+        return
     if len(text) < 100:
         await message.answer(
             "Пришлите запись звонка (аудио/голосовое) или полный текст расшифровки "

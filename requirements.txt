@@ -4,3 +4,4 @@ httpx>=0.27
 python-dotenv>=1.0
 truststore>=0.10
 certifi
+fpdf2>=2.7

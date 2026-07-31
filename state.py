@@ -67,3 +67,30 @@ def set_amo_initialized() -> None:
     with _lock:
         _state["amo_initialized"] = True
         _save()
+
+
+# ================== ЯЗЫК ИНТЕРФЕЙСА (владелец переключает) ==================
+
+def get_lang() -> str:
+    """Язык бота: 'ru' | 'uz'. По умолчанию русский (как было исторически)."""
+    lang = _state.get("lang", "ru")
+    return lang if lang in ("ru", "uz") else "ru"
+
+
+def set_lang(lang: str) -> None:
+    with _lock:
+        _state["lang"] = lang if lang in ("ru", "uz") else "ru"
+        _save()
+
+
+# ================== РЕЖИМ ПОИСКА СОТРУДНИКА ==================
+
+def is_awaiting_search() -> bool:
+    """True, если владелец нажал «Поиск» и следующий текст — это имя для поиска."""
+    return bool(_state.get("awaiting_search"))
+
+
+def set_awaiting_search(flag: bool) -> None:
+    with _lock:
+        _state["awaiting_search"] = bool(flag)
+        _save()

@@ -8,6 +8,8 @@ tmp/
 __pycache__/
 *.pyc
 *.pyo
+.venv/
+venv/
 
 # editor / os
 .DS_Store

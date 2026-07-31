@@ -37,6 +37,7 @@ for _col, _typ in (
     ("rec_link", "TEXT"),
     ("audio_path", "TEXT"),
     ("call_status", "INTEGER"),
+    ("doc_full", "TEXT"),  # полный документ (диалог + ТЗ) для PDF, кэш
 ):
     try:
         _conn.execute(f"ALTER TABLE calls ADD COLUMN {_col} {_typ}")
@@ -115,6 +116,13 @@ def count_for(manager_id: str) -> int:
 def set_uz_doc(call_id: int, uz_doc: str) -> None:
     with _lock:
         _conn.execute("UPDATE calls SET uz_doc = ? WHERE id = ?", (uz_doc, call_id))
+        _conn.commit()
+
+
+def set_doc_full(call_id: int, doc_full: str) -> None:
+    """Кэш полного документа (диалог + ТЗ) — источник для PDF."""
+    with _lock:
+        _conn.execute("UPDATE calls SET doc_full = ? WHERE id = ?", (doc_full, call_id))
         _conn.commit()
 
 
