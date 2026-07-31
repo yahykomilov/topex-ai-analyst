@@ -22,6 +22,7 @@ TEXTS = {
         "btn_to_calls": "⬅️ К звонкам сотрудника",
         "btn_pick_date": "📅 Выбрать дату",
         "btn_other_date": "📅 Другая дата",
+        "btn_search": "🔍 Поиск по имени",
         "btn_audio_tz": "📋 Аудио + ТЗ (узбекча)",
         "menu_text": (
             "📋 Главное меню\n\n"
@@ -68,6 +69,13 @@ TEXTS = {
         # направление звонка хранится в базе по-русски — переводим только на показ
         "direction_in": "Входящий",
         "direction_out": "Исходящий",
+        # --- поиск ---
+        "search_prompt": (
+            "🔍 Введите имя сотрудника (или его часть) — покажу подходящих.\n\n"
+            "Отменить: /menu"
+        ),
+        "search_none": "🔍 По запросу «{query}» никого не нашёл. Попробуйте другую часть имени.",
+        "search_results": "🔍 Нашёл по запросу «{query}» ({count}):",
         # --- даты ---
         "dates_title": "📅 Выберите дату — покажу все разговоры за этот день:",
         "dates_empty": "Звонков пока нет",
@@ -173,6 +181,7 @@ TEXTS = {
         "btn_to_calls": "⬅️ Xodim qo'ng'iroqlariga",
         "btn_pick_date": "📅 Sanani tanlash",
         "btn_other_date": "📅 Boshqa sana",
+        "btn_search": "🔍 Ism bo'yicha qidirish",
         "btn_audio_tz": "📋 Audio + TZ (o'zbekcha)",
         "menu_text": (
             "📋 Asosiy menyu\n\n"
@@ -220,6 +229,13 @@ TEXTS = {
         # qo'ng'iroq yo'nalishi bazada ruscha saqlanadi — faqat ko'rsatishda tarjima qilinadi
         "direction_in": "Kiruvchi",
         "direction_out": "Chiquvchi",
+        # --- qidiruv ---
+        "search_prompt": (
+            "🔍 Xodim ismini (yoki bir qismini) yozing — mosini ko'rsataman.\n\n"
+            "Bekor qilish: /menu"
+        ),
+        "search_none": "🔍 «{query}» bo'yicha hech kim topilmadi. Ismning boshqa qismini yozing.",
+        "search_results": "🔍 «{query}» bo'yicha topildi ({count}):",
         # --- sanalar ---
         "dates_title": "📅 Sanani tanlang — o'sha kungi barcha suhbatlarni ko'rsataman:",
         "dates_empty": "Hozircha qo'ng'iroqlar yo'q",

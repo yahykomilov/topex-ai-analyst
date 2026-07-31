@@ -61,6 +61,9 @@ dp = Dispatcher()
 TG_LIMIT = 4096
 PAGE_SIZE = 8
 
+# чаты, от которых ждём имя сотрудника для поиска (следующим сообщением)
+pending_search: set[int] = set()
+
 
 # ================== ВСПОМОГАТЕЛЬНОЕ ==================
 
@@ -175,6 +178,7 @@ async def cmd_start(message: Message) -> None:
 async def cmd_menu(message: Message) -> None:
     if not is_owner_chat(message.chat.id):
         return
+    pending_search.discard(message.chat.id)
     await message.answer(t("menu_text"), reply_markup=main_menu_kb())
 
 
@@ -236,6 +240,7 @@ async def cmd_status(message: Message) -> None:
 
 @dp.callback_query(F.data == "menu")
 async def cb_menu(cb: CallbackQuery) -> None:
+    pending_search.discard(cb.message.chat.id)
     await cb.message.edit_text(t("menu_text"), reply_markup=main_menu_kb())
     await cb.answer()
 
@@ -260,17 +265,20 @@ async def collect_managers() -> list[tuple[str, str, int]]:
     return entries
 
 
-def managers_kb(entries: list[tuple[str, str, int]]) -> InlineKeyboardMarkup:
+def managers_kb(entries: list[tuple[str, str, int]], with_search: bool) -> InlineKeyboardMarkup:
     kb = [
         [InlineKeyboardButton(text=f"👨‍💼 {name} ({cnt})", callback_data=f"mgr:{mid}:0")]
         for mid, name, cnt in entries
     ]
+    if with_search:
+        kb.append([InlineKeyboardButton(text=t("btn_search"), callback_data="mgrfind")])
     kb.append([InlineKeyboardButton(text=t("btn_menu"), callback_data="menu")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 
 @dp.callback_query(F.data == "mgrs")
 async def cb_managers(cb: CallbackQuery) -> None:
+    pending_search.discard(cb.message.chat.id)
     entries = await collect_managers()
 
     if not entries:
@@ -282,9 +290,35 @@ async def cb_managers(cb: CallbackQuery) -> None:
 
     await cb.message.edit_text(
         t("managers_title"),
-        reply_markup=managers_kb(entries),
+        reply_markup=managers_kb(entries, with_search=True),
     )
     await cb.answer()
+
+
+@dp.callback_query(F.data == "mgrfind")
+async def cb_manager_search(cb: CallbackQuery) -> None:
+    pending_search.add(cb.message.chat.id)
+    await cb.message.edit_text(
+        t("search_prompt"), reply_markup=back_kb("mgrs", t("btn_to_managers"))
+    )
+    await cb.answer()
+
+
+async def show_search_results(chat_id: int, query: str) -> None:
+    needle = query.strip().casefold()
+    found = [e for e in await collect_managers() if needle in e[1].casefold()]
+    if not found:
+        await bot.send_message(
+            chat_id,
+            t("search_none", query=query),
+            reply_markup=back_kb("mgrs", t("btn_to_managers")),
+        )
+        return
+    await bot.send_message(
+        chat_id,
+        t("search_results", query=query, count=len(found)),
+        reply_markup=managers_kb(found, with_search=True),
+    )
 
 
 @dp.callback_query(F.data.startswith("mgr:"))
@@ -827,6 +861,13 @@ async def handle_text(message: Message) -> None:
         await message.answer(t("private_hint"))
         return
     text = message.text.strip()
+
+    # ждём имя сотрудника после кнопки «Поиск по имени»
+    if message.chat.id in pending_search:
+        pending_search.discard(message.chat.id)
+        await show_search_results(message.chat.id, text)
+        return
+
     if len(text) < 100:
         await message.answer(t("manual_text_short"))
         return
