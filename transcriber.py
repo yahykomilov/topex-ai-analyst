@@ -81,6 +81,20 @@ async def transcribe(audio_path: Path) -> str:
             "Используйте GEMINI_API_KEY для больших файлов."
         )
 
+    # На узбекском телефонном аудио Whisper часто выдаёт «складный бред» (буквы
+    # правильные, слова — нет), который проходит проверку качества. Gemini заметно
+    # точнее, поэтому при языке uz и наличии ключа пробуем ЕГО ПЕРВЫМ, а Whisper
+    # оставляем страховкой (например, если Gemini упёрся в лимит).
+    prefer_gemini = bool(GEMINI_API_KEY) and WHISPER_LANGUAGE == "uz"
+    if prefer_gemini:
+        try:
+            gemini_text = await _gemini_transcribe(audio_path)
+            log.info("Gemini (основной для uz): %d символов", len(gemini_text))
+            if _quality_check(gemini_text, min_len=10):
+                return gemini_text
+        except Exception as e:
+            log.warning("Gemini (основной): ошибка — %s, откатываюсь на Whisper", e)
+
     # Пробуем Whisper-провайдеры (Groq #1 → Groq #2 → OpenAI)
     whisper_text = ""
     for p in _PROVIDERS:
@@ -97,11 +111,11 @@ async def transcribe(audio_path: Path) -> str:
             log.warning("%s: ошибка — %s", p["name"], e)
             continue
 
-    # Если Whisper не дал нормального текста — пробуем Gemini
-    if GEMINI_API_KEY and not _quality_check(whisper_text):
+    # Если Whisper не дал нормального текста и Gemini ещё не пробовали — пробуем Gemini
+    if GEMINI_API_KEY and not prefer_gemini and not _quality_check(whisper_text):
         try:
             gemini_text = await _gemini_transcribe(audio_path)
-            log.info("Gemini: %d символов", len(gemini_text))
+            log.info("Gemini (запасной): %d символов", len(gemini_text))
             if _quality_check(gemini_text, min_len=10):
                 return gemini_text
         except Exception as e:

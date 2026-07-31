@@ -41,7 +41,7 @@ GROQ_ANALYSIS_MODEL = os.getenv("GROQ_ANALYSIS_MODEL", "llama-3.3-70b-versatile"
 
 # Gemini — запасной транскрибер для узбекского (когда Whisper плох)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip()
 
 AMO_SUBDOMAIN = os.getenv("AMO_SUBDOMAIN", "").strip().replace(".amocrm.ru", "")
 AMO_ACCESS_TOKEN = os.getenv("AMO_ACCESS_TOKEN", "").strip()
