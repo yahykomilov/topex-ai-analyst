@@ -4,7 +4,7 @@ import state
 
 DEFAULT_LANG = "ru"
 
-LANGUAGES = {"ru": "🇷🇺 Русский", "uz": "🇺🇿 O'zbekcha"}
+LANGUAGES = {"ru": "🇷🇺 Русский", "uz": "🇺🇿 O'zbekcha", "en": "🇬🇧 English"}
 
 TEXTS = {
     "ru": {
@@ -329,6 +329,165 @@ TEXTS = {
             5: "o'tk.",
             6: "javobs.",
             7: "aloqa yo'q",
+        },
+    },
+    "en": {
+        # --- menu and buttons ---
+        "menu_title": "📋 Main menu",
+        "btn_managers": "👥 Managers",
+        "btn_daily": "📈 Daily report",
+        "btn_stats": "📊 Overall statistics",
+        "btn_language": "🌐 Language / Til",
+        "btn_menu": "⬅️ Menu",
+        "btn_menu_plain": "📋 Menu",
+        "btn_back": "⬅️ Back",
+        "btn_to_managers": "👥 To managers",
+        "btn_to_manager": "⬅️ To manager",
+        "btn_to_calls": "⬅️ To manager's calls",
+        "btn_pick_date": "📅 Pick a date",
+        "btn_other_date": "📅 Another date",
+        "btn_search": "🔍 Search by name",
+        "btn_audio_tz": "📋 Audio + brief (Uzbek)",
+        "menu_text": (
+            "📋 Main menu\n\n"
+            "👥 Managers — pick a manager, see their calls, AI breakdown and statistics.\n"
+            "📈 Daily report — clients served, top performer of the day, system errors and "
+            "a brief for each manager (arrives automatically at 20:00).\n"
+            "📊 Overall statistics — results for the whole department.\n\n"
+            "🎧 You can also just send a call recording or transcript text here — "
+            "I'll audit it right away."
+        ),
+        # --- access ---
+        "owner_set": "✅ You are now the bot owner.",
+        "private_bot": "⛔ This bot is private and already linked to another user.",
+        "private_hint": "⛔ This bot is private. Send /start if you're the owner.",
+        # --- language ---
+        "lang_prompt": "🌐 Choose the interface language:",
+        "lang_changed": "✅ Interface language: English",
+        # --- status ---
+        "status_title": "📡 Bot status",
+        "status_amo_ok": "🟢 AmoCRM connected: {name} (checked every {interval} sec)",
+        "status_amo_error": "🔴 AmoCRM: connection error — {error}",
+        "status_amo_off": (
+            "⚪ AmoCRM not connected (manual mode). "
+            "Add AMO_SUBDOMAIN and AMO_ACCESS_TOKEN to the .env file"
+        ),
+        "status_min_duration": "⏱ Minimum call duration: {seconds} sec",
+        "status_db_calls": "💾 Calls in database: {total}",
+        # --- managers ---
+        "managers_title": "👥 Managers (in brackets — number of analyzed calls):",
+        "managers_empty": (
+            "No managers or analyzed calls yet.\n\n"
+            "Send a call recording here — or wait for a new call from AmoCRM."
+        ),
+        "manager_unknown": "Manager",
+        "manager_no_calls": "No analyzed calls yet.",
+        "manager_pick_call": (
+            "Choose a call (✅❌❓ — already analyzed: audio + PDF, "
+            "⬜ — new: I'll analyze it on tap):"
+        ),
+        "manager_no_crm_calls": "No calls with a recording visible in CRM yet.",
+        "no_phone": "no number",
+        "dur_min": "m",
+        "dur_sec": "s",
+        # call direction is stored in the DB in Russian — translated only for display
+        "direction_in": "Incoming",
+        "direction_out": "Outgoing",
+        # --- search ---
+        "search_prompt": (
+            "🔍 Enter a manager's name (or part of it) — I'll show matches.\n\n"
+            "Cancel: /menu"
+        ),
+        "search_none": "🔍 No one found for «{query}». Try a different part of the name.",
+        "search_results": "🔍 Found for «{query}» ({count}):",
+        # --- dates ---
+        "dates_title": "📅 Pick a date — I'll show all conversations for that day:",
+        "dates_empty": "No calls yet",
+        "day_empty": "No calls on {day}",
+        "day_title": (
+            "👨‍💼 {name} • 📅 {day}\n\n"
+            "Conversations for this day ({count}):\n"
+            "✅❌❓ — analyzed, ⬜ — I'll analyze on tap"
+        ),
+        "day_calls_label": "📅 {date} ({weekday}) • {count} calls",
+        "weekdays": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        # --- call analysis ---
+        "analyzing": "Analyzing the call...",
+        "analyzing_long": "🎧 Downloading the recording, transcribing and preparing PDF (1-2 minutes)...",
+        "call_not_in_crm": (
+            "❌ Call not found in CRM (may be outdated). "
+            "Reopen the manager's card."
+        ),
+        "call_not_analyzed": "⚠️ Could not analyze the call (no speech or recording error).",
+        "call_not_found": "Call not found.",
+        "audio_unavailable": "(audio recording unavailable)",
+        "tz_unavailable": "No brief available for this call.",
+        "report_missing": "No report available.",
+        "transcript_missing": "No transcript text available.",
+        "transcript_title": "📃 Full conversation text (verbatim, as recorded):",
+        "pdf_failed": "⚠️ Could not build the PDF report: {error}",
+        "error": "❌ Error: {error}",
+        # --- PDF ---
+        "pdf_title": "Call analysis",
+        "pdf_manager": "Manager: {name}",
+        "pdf_date": "Date: {date} • {direction} • {duration}",
+        "pdf_score": "Score: {score}",
+        "pdf_phone": "Client phone: {phone}",
+        "pdf_card": "CRM card: {url}",
+        "pdf_uz_section": "BRIEF FOR THE MANAGER (IN UZBEK)",
+        # --- statistics ---
+        "stats_title": "📊 Overall department statistics\n",
+        "stats_by_manager": "\n👥 By manager:",
+        "stats_total": "📞 Total calls: {total}",
+        "stats_ok": "✅ Successful: {count} ({percent}%)",
+        "stats_fail": "❌ Unsuccessful: {count} ({percent}%)",
+        "stats_doubt": "❓ Uncertain: {count} ({percent}%)",
+        "stats_avg": "⭐ Average score: {avg}/10",
+        "stats_manager_line": "• {name}: {total} calls, ✅{ok}% ❌{fail}% ❓{doubt}%{avg}",
+        "stats_manager_avg": ", avg score {avg}/10",
+        # --- daily report ---
+        "daily_preparing": "Preparing the report...",
+        "daily_building": "📈 Building the overall daily report...",
+        "daily_empty": (
+            "No analyzed calls today yet — the report will be ready "
+            "once calls come in."
+        ),
+        "daily_error": "❌ Error building the report: {error}",
+        "daily_auto": "🌙 Automatic daily report:",
+        # --- manual upload ---
+        "manual_auditing": "🧠 Running a strict audit of the call...",
+        "manual_got_audio": "🎧 Got the recording. Transcribing...",
+        "manual_transcribed": "🧠 Transcribed. Running a strict audit of the call...",
+        "manual_no_speech": "⚠️ Almost no speech in the recording — nothing to analyze.",
+        "manual_send_audio": (
+            "Send an audio file (mp3/wav/ogg/m4a), a voice message, or a .txt transcript."
+        ),
+        "manual_too_big": (
+            "⚠️ File is larger than 20 MB — Telegram doesn't let bots download files that big. "
+            "Compress the recording or send it in parts."
+        ),
+        "manual_text_short": (
+            "Send a call recording (audio/voice) or the full transcript text "
+            "(at least 100 characters).\n\nMenu: /menu"
+        ),
+        # --- call statuses ---
+        "call_status_labels": {
+            1: "📞 Planned",
+            2: "📅 Scheduled",
+            3: "🔄 Completed",
+            4: "✅ Talked",
+            5: "📳 Missed",
+            6: "❌ No answer",
+            7: "🚫 No connection",
+        },
+        "call_status_short": {
+            1: "plan",
+            2: "sched.",
+            3: "done",
+            4: "talk",
+            5: "missed",
+            6: "no ans.",
+            7: "no conn.",
         },
     },
 }
