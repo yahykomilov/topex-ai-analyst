@@ -31,6 +31,7 @@ from analyzer import (
 from config import (
     AMO_DEFAULT_HOST,
     AUDIO_DIR,
+    EXTRA_OWNER_IDS,
     MANAGER_WHITELIST,
     MIN_CALL_DURATION,
     POLL_INTERVAL,
@@ -85,7 +86,7 @@ async def send_long(chat_id: int, text: str, reply_markup=None) -> None:
 
 
 def is_owner_chat(chat_id: int) -> bool:
-    return state.get_owner() == chat_id
+    return state.get_owner() == chat_id or chat_id in EXTRA_OWNER_IDS
 
 
 def fmt_dt(ts: int) -> str:
@@ -159,7 +160,7 @@ async def cmd_start(message: Message) -> None:
     if owner is None:
         state.set_owner(message.chat.id)
         await message.answer(t(lang, "owner_assigned"))
-    elif owner != message.chat.id:
+    elif owner != message.chat.id and message.chat.id not in EXTRA_OWNER_IDS:
         await message.answer(t(lang, "private_taken"))
         return
     # первый вход владельца: пока amoCRM не подключён — ведём через мастер ввода ключей

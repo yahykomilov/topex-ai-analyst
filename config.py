@@ -60,6 +60,12 @@ MANAGER_WHITELIST = [
     s.strip() for s in os.getenv("MANAGER_WHITELIST", "").split(",") if s.strip()
 ]
 
+# доступ к боту помимо владельца: доп. Telegram chat_id через запятую (из .env).
+# Владелец (первый /start) остаётся, эти id получают такой же доступ.
+EXTRA_OWNER_IDS = {
+    int(s) for s in os.getenv("EXTRA_OWNER_IDS", "").replace(" ", "").split(",") if s
+}
+
 MIN_CALL_DURATION = int(os.getenv("MIN_CALL_DURATION", "20"))
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "120"))
 
