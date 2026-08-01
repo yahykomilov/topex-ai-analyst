@@ -21,6 +21,7 @@ from config import (
     GROQ_BASE_URL,
     GROQ_WHISPER_MODEL,
     OPENAI_API_KEY,
+    OPENAI_TRANSCRIBE_MODEL,
     WHISPER_LANGUAGE,
 )
 
@@ -38,6 +39,16 @@ MIN_TRANSCRIPT_LENGTH = 30
 
 _PROVIDERS: list[dict] = []
 
+# OpenAI — платный основной провайдер (если ключ задан).
+# Качество лучше Groq-Whisper, особенно на узбекском; цена см. OPENAI_TRANSCRIBE_MODEL.
+if OPENAI_API_KEY:
+    _PROVIDERS.append({
+        "name": "OpenAI Transcribe",
+        "client": AsyncOpenAI(api_key=OPENAI_API_KEY),
+        "model": OPENAI_TRANSCRIBE_MODEL,
+    })
+
+# Groq — бесплатный fallback (если OpenAI не задан или не справился)
 if GROQ_API_KEY:
     _PROVIDERS.append({
         "name": "Groq Whisper #1",
@@ -52,24 +63,16 @@ if GROQ_API_KEY_2:
         "model": GROQ_WHISPER_MODEL,
     })
 
-# OpenAI Whisper — если нет Groq, или как fallback
-if not GROQ_API_KEY and OPENAI_API_KEY:
-    _PROVIDERS.append({
-        "name": "OpenAI Whisper",
-        "client": AsyncOpenAI(api_key=OPENAI_API_KEY),
-        "model": "whisper-1",
-    })
-
 
 async def transcribe(audio_path: Path) -> str:
     """
     Расшифровка аудио с мульти-провайдерным Fallback.
 
     Цепочка:
-      1. Groq Whisper #1 (основной, бесплатный)
-      2. Groq Whisper #2 (запасной ключ)
-      3. Gemini Flash (если Groq не справился с узбекским)
-      4. OpenAI Whisper (если совсем ничего)
+      1. OpenAI Transcribe (основной, платный — gpt-4o-mini-transcribe / gpt-4o-transcribe)
+      2. Groq Whisper #1 (бесплатный fallback)
+      3. Groq Whisper #2 (запасной ключ)
+      4. Gemini Flash (если Groq не справился с узбекским)
 
     Если язык WHISPER_LANGUAGE=uz и результат подозрительно короткий —
     пробуем Gemini (у него лучше с multiligual).
