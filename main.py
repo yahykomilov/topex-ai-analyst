@@ -30,6 +30,7 @@ from analyzer import (
 )
 from config import (
     AUDIO_DIR,
+    EXTRA_OWNER_IDS,
     MANAGER_WHITELIST,
     MIN_CALL_DURATION,
     POLL_INTERVAL,
@@ -90,7 +91,7 @@ async def send_long(chat_id: int, text: str, reply_markup=None) -> None:
 
 
 def is_owner_chat(chat_id: int) -> bool:
-    return state.get_owner() == chat_id
+    return state.get_owner() == chat_id or chat_id in EXTRA_OWNER_IDS
 
 
 def fmt_dt(ts: int) -> str:
@@ -168,7 +169,7 @@ async def cmd_start(message: Message) -> None:
     if owner is None:
         state.set_owner(message.chat.id)
         await message.answer(t("owner_set"))
-    elif owner != message.chat.id:
+    elif owner != message.chat.id and message.chat.id not in EXTRA_OWNER_IDS:
         await message.answer(t("private_bot"))
         return
     await message.answer(t("menu_text"), reply_markup=main_menu_kb())
@@ -950,7 +951,7 @@ async def process_amo_call(call: dict) -> int | None:
             created_at=call["created_at"] or int(time.time()),
             transcript="",
             report="",
-            score=0,
+            score=None,  # недозвон/пропущенный — разговора не было, не тянем средний балл вниз
             verdict="fail",
             call_status=call_status,
             card_url=card_url,

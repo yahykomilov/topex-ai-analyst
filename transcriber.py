@@ -81,6 +81,19 @@ async def transcribe(audio_path: Path) -> str:
             "Используйте GEMINI_API_KEY для больших файлов."
         )
 
+    # Узбекский: Gemini слушает само аудио и различает говорящих по голосам —
+    # даёт точнее и сразу с ролями (Operator/Mijoz), чего Whisper не умеет.
+    # Поэтому для uz Gemini — ОСНОВНОЙ, а Whisper ниже остаётся страховкой.
+    if WHISPER_LANGUAGE == "uz" and GEMINI_API_KEY:
+        try:
+            gemini_text = await _gemini_transcribe(audio_path)
+            if _quality_check(gemini_text, min_len=10):
+                log.info("Gemini (uz, основной): %d символов", len(gemini_text))
+                return gemini_text
+            log.info("Gemini (uz): качество низкое, пробую Whisper")
+        except Exception as e:
+            log.warning("Gemini (uz, основной): ошибка — %s, пробую Whisper", e)
+
     # Пробуем Whisper-провайдеры (Groq #1 → Groq #2 → OpenAI)
     whisper_text = ""
     for p in _PROVIDERS:
@@ -147,19 +160,24 @@ async def _gemini_transcribe(audio_path: Path) -> str:
         # Загружаем файл в Gemini (синхронно, но быстро)
         file = await asyncio.to_thread(gemini_client.files.upload, file=audio_path)
 
-        # Ждём обработки (polling)
-        while True:
+        # Ждём обработки (polling с таймаутом ~30 сек — иначе риск зависнуть навсегда)
+        for _ in range(30):
             meta = await asyncio.to_thread(gemini_client.files.get, name=file.name)
             if meta.state.name == "ACTIVE":
                 break
             if meta.state.name == "FAILED":
                 raise RuntimeError(f"Gemini file processing failed: {meta}")
             await asyncio.sleep(1)
+        else:
+            raise RuntimeError("Gemini: файл не обработан за 30 сек (таймаут)")
 
         prompt = (
-            "Transcribe this audio word for word in the original spoken language. "
-            "If the audio contains Uzbek or Russian, transcribe it accurately. "
-            "Output ONLY the raw transcription, no explanations, no commentary."
+            "This is a phone call between a sales operator and a client, "
+            "in Uzbek or Russian. Transcribe it word for word in the original "
+            "spoken language. There are TWO speakers — tell them apart BY VOICE "
+            "and label EVERY line as 'Operator:' or 'Mijoz:' (use exactly these "
+            "labels). Keep the labels consistent through the whole call. "
+            "Output ONLY the labeled dialog, no explanations, no commentary."
         )
         response = await asyncio.to_thread(
             gemini_client.models.generate_content,
