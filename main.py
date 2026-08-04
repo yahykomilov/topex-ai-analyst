@@ -71,10 +71,18 @@ pending_search: set[int] = set()
 def split_message(text: str) -> list[str]:
     chunks, current = [], ""
     for line in text.split("\n"):
+        # супер-длинная строка без переносов: режем по лимиту, не теряя данные
+        if len(line) > TG_LIMIT:
+            if current:
+                chunks.append(current)
+                current = ""
+            for i in range(0, len(line), TG_LIMIT):
+                chunks.append(line[i:i + TG_LIMIT])
+            continue
         if len(current) + len(line) + 1 > TG_LIMIT:
             if current:
                 chunks.append(current)
-            current = line[:TG_LIMIT]
+            current = line
         else:
             current = f"{current}\n{line}" if current else line
     if current:
@@ -611,7 +619,11 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
     if not audio_sent:
         await bot.send_message(chat_id, caption + "\n" + t("audio_unavailable"))
 
-    # 2. Короткое ТЗ на узбекском (генерируем один раз, потом берём из базы)
+    # 2. Разбор с диалогом — прямо в Telegram (не только в PDF)
+    report_text = c["report"] or t("report_missing")
+    await send_long(chat_id, f"{t('report_title')}\n\n{report_text}")
+
+    # 3. Короткое ТЗ на узбекском (генерируем один раз, потом берём из базы)
     uz = c["uz_doc"]
     if not uz and c["transcript"]:
         try:
@@ -621,7 +633,7 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
             log.exception("Ошибка генерации ТЗ")
             uz = None
 
-    # 3. PDF со всем разбором
+    # 4. PDF со всем разбором
     await send_call_pdf(chat_id, c, uz)
 
     kb = back_kb(f"mgr:{c['manager_id']}:0", t("btn_to_calls"))

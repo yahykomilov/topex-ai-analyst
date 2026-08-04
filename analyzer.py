@@ -36,17 +36,24 @@ log = logging.getLogger("analyzer")
 
 # ---------------------------------------------------------------------------
 # LLM Client init
-# Приоритет: Claude > Groq (бесплатно) > OpenAI
+# Приоритет: OpenAI (основная) > Groq (бесплатный fallback) > Groq-8B (запасной)
+# Claude не в цепочке: клиент ещё не оплатил, ANTHROPIC_API_KEY пустой → путь не активен.
 # ---------------------------------------------------------------------------
-if GROQ_API_KEY and not ANTHROPIC_API_KEY:
-    _openai = AsyncOpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
-    _chat_model = GROQ_ANALYSIS_MODEL
-else:
-    _openai = AsyncOpenAI(api_key=OPENAI_API_KEY)
-    _chat_model = ANALYSIS_MODEL
+GROQ_FALLBACK_MODEL = "llama-3.1-8b-instant"  # последний запасной на исчерпание лимита
 
-# запасная модель Groq на случай исчерпания дневного лимита основной
-GROQ_FALLBACK_MODEL = "llama-3.1-8b-instant"
+# цепочка (имя, клиент, модель) — перебираем по порядку при лимите/ошибке
+_LLM_CHAIN: list[tuple[str, AsyncOpenAI, str]] = []
+if OPENAI_API_KEY:
+    _LLM_CHAIN.append(("OpenAI", AsyncOpenAI(api_key=OPENAI_API_KEY), ANALYSIS_MODEL))
+if GROQ_API_KEY:
+    _groq_client = AsyncOpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
+    _LLM_CHAIN.append(("Groq", _groq_client, GROQ_ANALYSIS_MODEL))
+    _LLM_CHAIN.append(("Groq fallback", _groq_client, GROQ_FALLBACK_MODEL))
+
+if not _LLM_CHAIN:
+    raise RuntimeError(
+        "Нет ключа для анализа: задайте OPENAI_API_KEY или GROQ_API_KEY в .env"
+    )
 
 # ---------------------------------------------------------------------------
 # ОСНОВНЫЕ ФУНКЦИИ
@@ -277,6 +284,64 @@ def report_excerpt(report: str, max_len: int = 700) -> str:
     return excerpt[:max_len]
 
 
+def extract_errors(report: str) -> list[dict[str, str]]:
+    """
+    Вытаскивает из отчёта блок ошибок/советов как структурированный список.
+
+    Работает с русским и узбекским форматом:
+      RU:  "🔴 ЧТО ИСПРАВИТЬ" + "ГДЕ: ..." + "👉 Как надо: ..."
+      UZ:  "TUZATILADIGAN JOYLARI" / "TAVSIYALAR" + "QAYERDA: ..."
+
+    Каждый элемент: {'error': ..., 'where': ..., 'fix': ...}
+    where — «где именно ошибка»: дословная цитата реплики менеджера
+    (или '—', если модель не указала).
+    """
+    if not report:
+        return []
+
+    # заголовки начала блока (первый найденный)
+    start = -1
+    for header in ("🔴 ЧТО ИСПРАВИТЬ", "TUZATILADIGAN JOYLARI", "TAVSIYALAR"):
+        idx = report.find(header)
+        if idx != -1 and (start == -1 or idx < start):
+            start = idx
+    if start == -1:
+        return []
+
+    # конец блока — следующий секционный заголовок
+    block = report[start:]
+    end = len(block)
+    for marker in ("💡", "➖", "MASLAHAT:", "BALLOVCHI"):
+        idx = block.find(marker, 3)  # 3 — пропускаем сам заголовок
+        if idx != -1 and idx < end:
+            end = idx
+    block = block[:end]
+
+    items: list[dict[str, str]] = []
+    # разделяем блок на пункты: "1. ...", "2. ..."
+    parts = re.split(r"\n\s*(?=\d+\.\s)", block)
+    for part in parts:
+        # отсекаем сам заголовок секции (в нём нет ни фикса, ни локации)
+        if "👉" not in part and not re.search(r"(?:ГДЕ|QAYERDA)\s*[:：]", part):
+            continue
+        lines = [ln.strip() for ln in part.strip().splitlines() if ln.strip()]
+        error, where, fix = "", "", ""
+        for ln in lines:
+            if ln.startswith("👉"):
+                fix = ln.lstrip("👉").strip()
+                fix = re.sub(r"^(?:Как надо|Как исправить)\s*[:：]\s*", "", fix)
+            elif re.match(r"^QAYERDA\s*[:：]", ln, re.IGNORECASE):
+                where = re.sub(r"^QAYERDA\s*[:：]\s*", "", ln, flags=re.IGNORECASE)
+            elif re.match(r"^ГДЕ\s*[:：]", ln, re.IGNORECASE):
+                where = re.sub(r"^ГДЕ\s*[:：]\s*", "", ln, flags=re.IGNORECASE)
+            elif not error:
+                error = re.sub(r"^\d+\.\s*", "", ln)
+        if not error and not fix:
+            continue
+        items.append({"error": error, "where": where or "—", "fix": fix})
+    return items
+
+
 # ---------------------------------------------------------------------------
 # ВНУТРЕННИЕ ФУНКЦИИ
 # ---------------------------------------------------------------------------
@@ -301,23 +366,19 @@ async def _analyze_openai(
     user_message: str, system_prompt: str, max_tokens: int = 4000
 ) -> str:
     """
-    Отправляет запрос в OpenAI/Groq.
-    При RateLimitError — автоматический fallback на запасную модель Groq.
+    Отправляет запрос по цепочке моделей: OpenAI (основная) → Groq → Groq fallback.
+    При RateLimitError/ошибке — автоматически переключается на следующую модель.
     """
     messages = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_message},
     ]
 
-    models_to_try = [_chat_model]
-    if GROQ_API_KEY and _chat_model != GROQ_FALLBACK_MODEL:
-        models_to_try.append(GROQ_FALLBACK_MODEL)
-
-    last_error = None
-    for model in models_to_try:
+    last_error: Exception | None = None
+    for name, client, model in _LLM_CHAIN:
         try:
-            log.info("Анализ через %s...", model)
-            resp = await _openai.chat.completions.create(
+            log.info("Анализ через %s (%s)...", name, model)
+            resp = await client.chat.completions.create(
                 model=model,
                 messages=messages,
                 temperature=0.3,
@@ -327,15 +388,17 @@ async def _analyze_openai(
             return resp.choices[0].message.content or ""
         except RateLimitError as e:
             last_error = e
-            log.warning("Лимит модели %s исчерпан", model)
+            log.warning("Лимит модели %s (%s) исчерпан", name, model)
             continue
         except Exception as e:
             last_error = e
-            log.error("Ошибка модели %s: %s", model, e)
+            log.error("Ошибка модели %s (%s): %s", name, model, e)
             continue
 
-    # Если все модели упали — пробуем последнюю с повышением лимита
-    raise last_error  # type: ignore[misc]
+    # Если все модели упали — пробрасываем последнюю ошибку
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Пустая цепочка моделей для анализа")
 
 
 async def _analyze_claude(
