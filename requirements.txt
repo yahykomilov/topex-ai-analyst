@@ -1,4 +1,5 @@
 aiogram>=3.15
+fpdf2>=2.8
 openai>=1.55
 httpx>=0.27
 python-dotenv>=1.0
