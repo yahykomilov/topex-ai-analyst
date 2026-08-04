@@ -688,6 +688,8 @@ async def cb_stats(cb: CallbackQuery) -> None:
                     "stats_manager_line",
                     name=r["manager_name"],
                     total=s["total"],
+                    answered=s.get("answered", 0),
+                    noanswer=s["counts"].get("noanswer", 0),
                     ok=s["percent"]["ok"],
                     fail=s["percent"]["fail"],
                     doubt=s["percent"]["doubt"],
@@ -717,7 +719,7 @@ async def build_daily_report() -> str | None:
     phones = {c["phone"] for c in calls if c["phone"]}
     no_phone = sum(1 for c in calls if not c["phone"])
     clients = len(phones) + no_phone
-    verdicts = {"ok": 0, "fail": 0, "doubt": 0}
+    verdicts = {"ok": 0, "fail": 0, "doubt": 0, "noanswer": 0}
     scores = []
     per_mgr: dict[str, dict] = {}
     for c in calls:
@@ -725,7 +727,8 @@ async def build_daily_report() -> str | None:
         if c["score"] is not None:
             scores.append(c["score"])
         m = per_mgr.setdefault(
-            c["manager_name"], {"n": 0, "ok": 0, "fail": 0, "doubt": 0, "scores": []}
+            c["manager_name"],
+            {"n": 0, "ok": 0, "fail": 0, "doubt": 0, "noanswer": 0, "scores": []},
         )
         m["n"] += 1
         m[c["verdict"]] += 1
@@ -737,7 +740,9 @@ async def build_daily_report() -> str | None:
         f"Дата: {now.strftime('%d.%m.%Y')}",
         f"Клиентов обслужено (уникальных): {clients}",
         f"Звонков разобрано: {len(calls)}",
-        f"Успешных: {verdicts['ok']}, неуспешных: {verdicts['fail']}, под вопросом: {verdicts['doubt']}",
+        f"Отвечено (был разговор): {verdicts['ok'] + verdicts['fail'] + verdicts['doubt']} — "
+        f"✅ успешных {verdicts['ok']}, ❌ неуспешных {verdicts['fail']}, ❓ под вопросом {verdicts['doubt']}",
+        f"📵 Недозвон / не взяли трубку: {verdicts['noanswer']}",
         f"Средний балл отдела: {avg}/10",
         "",
         "По сотрудникам:",
@@ -746,7 +751,7 @@ async def build_daily_report() -> str | None:
         m_avg = round(sum(m["scores"]) / len(m["scores"]), 1) if m["scores"] else "—"
         facts.append(
             f"- {name}: {m['n']} зв., ср. балл {m_avg}/10, "
-            f"успешных {m['ok']}, неуспешных {m['fail']}, под вопросом {m['doubt']}"
+            f"✅{m['ok']} ❌{m['fail']} ❓{m['doubt']} 📵{m['noanswer']}"
         )
 
     summaries = []
@@ -952,7 +957,7 @@ async def process_amo_call(call: dict) -> int | None:
             transcript="",
             report="",
             score=None,  # недозвон/пропущенный — разговора не было, не тянем средний балл вниз
-            verdict="fail",
+            verdict="noanswer",  # отдельная категория: клиент не взял трубку (НЕ «неуспешный» разговор)
             call_status=call_status,
             card_url=card_url,
             rec_link="",

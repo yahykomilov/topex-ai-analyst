@@ -9,6 +9,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# venv & logs
+.venv/
+*.log
+
 # editor / os
 .DS_Store
 .vscode/
