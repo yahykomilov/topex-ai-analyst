@@ -767,13 +767,20 @@ async def build_daily_report() -> str | None:
         )
 
     summaries = []
+    total_len = 0
+    MAX_SUMMARY_CHARS = 8000
     for c in calls[:25]:
-        summaries.append(
+        s = (
             f"— {c['manager_name']} • {fmt_dt(c['created_at'])} • {c['phone'] or 'без номера'}:\n"
             f"{report_excerpt(c['report'] or '')}"
         )
-    if len(calls) > 25:
-        summaries.append(f"(и ещё {len(calls) - 25} звонков — в выжимку не вошли)")
+        if total_len + len(s) > MAX_SUMMARY_CHARS:
+            break
+        summaries.append(s)
+        total_len += len(s)
+    shown = len(summaries)
+    if len(calls) > shown:
+        summaries.append(f"(и ещё {len(calls) - shown} звонков — в выжимку не вошли)")
 
     return await team_report("\n".join(facts), "\n\n".join(summaries))
 

@@ -16,8 +16,7 @@ from openai import AsyncOpenAI
 from config import (
     GEMINI_API_KEY,
     GEMINI_MODEL,
-    GROQ_API_KEY,
-    GROQ_API_KEY_2,
+    GROQ_API_KEYS,
     GROQ_BASE_URL,
     GROQ_WHISPER_MODEL,
     OPENAI_API_KEY,
@@ -48,34 +47,26 @@ if OPENAI_API_KEY:
         "model": OPENAI_TRANSCRIBE_MODEL,
     })
 
-# Groq — бесплатный fallback (если OpenAI не задан или не справился)
-if GROQ_API_KEY:
+# Groq — бесплатный fallback (ротация по всем ключам из GROQ_API_KEYS)
+for i, key in enumerate(GROQ_API_KEYS):
     _PROVIDERS.append({
-        "name": "Groq Whisper #1",
-        "client": AsyncOpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL),
-        "model": GROQ_WHISPER_MODEL,
-    })
-
-if GROQ_API_KEY_2:
-    _PROVIDERS.append({
-        "name": "Groq Whisper #2",
-        "client": AsyncOpenAI(api_key=GROQ_API_KEY_2, base_url=GROQ_BASE_URL),
+        "name": f"Groq Whisper #{i+1}",
+        "client": AsyncOpenAI(api_key=key, base_url=GROQ_BASE_URL),
         "model": GROQ_WHISPER_MODEL,
     })
 
 
 async def transcribe(audio_path: Path) -> str:
     """
-    Расшифровка аудио с мульти-провайдерным Fallback.
+    Расшифровка аудио с мульти-провайдерным Fallback и retry.
 
     Цепочка:
-      1. OpenAI Transcribe (основной, платный — gpt-4o-mini-transcribe / gpt-4o-transcribe)
-      2. Groq Whisper #1 (бесплатный fallback)
-      3. Groq Whisper #2 (запасной ключ)
-      4. Gemini Flash (если Groq не справился с узбекским)
+      1. Gemini Flash (если WHISPER_LANGUAGE=uz — у него лучше multilingual)
+      2. OpenAI Transcribe (основной, платный — gpt-4o-mini-transcribe / gpt-4o-transcribe)
+      3. Groq Whisper #1..#N (бесплатный fallback, ротация по ключам)
 
     Если язык WHISPER_LANGUAGE=uz и результат подозрительно короткий —
-    пробуем Gemini (у него лучше с multiligual).
+    пробуем Gemini (у него лучше с multilingual).
     """
     size = audio_path.stat().st_size
     if size > WHISPER_MAX_BYTES and not GEMINI_API_KEY:
@@ -84,9 +75,7 @@ async def transcribe(audio_path: Path) -> str:
             "Используйте GEMINI_API_KEY для больших файлов."
         )
 
-    # Узбекский: Gemini слушает само аудио и различает говорящих по голосам —
-    # даёт точнее и сразу с ролями (Operator/Mijoz), чего Whisper не умеет.
-    # Поэтому для uz Gemini — ОСНОВНОЙ, а Whisper ниже остаётся страховкой.
+    # Узбекский: Gemini слушает само аудио и различает говорящих по голосам
     if WHISPER_LANGUAGE == "uz" and GEMINI_API_KEY:
         try:
             gemini_text = await _gemini_transcribe(audio_path)
@@ -97,21 +86,34 @@ async def transcribe(audio_path: Path) -> str:
         except Exception as e:
             log.warning("Gemini (uz, основной): ошибка — %s, пробую Whisper", e)
 
-    # Пробуем Whisper-провайдеры (Groq #1 → Groq #2 → OpenAI)
+    # Пробуем Whisper-провайдеры с retry при rate limit
     whisper_text = ""
     for p in _PROVIDERS:
-        try:
-            whisper_text = await _whisper_transcribe(p["client"], p["model"], audio_path)
-            log.info("%s: %d символов", p["name"], len(whisper_text))
+        for attempt in range(3):
+            try:
+                whisper_text = await _whisper_transcribe(
+                    p["client"], p["model"], audio_path
+                )
+                log.info("%s: %d символов", p["name"], len(whisper_text))
 
-            if _quality_check(whisper_text):
-                log.info("%s: качество норм, берём", p["name"])
-                return whisper_text
-            else:
-                log.info("%s: качество низкое, пробуем следующий", p["name"])
-        except Exception as e:
-            log.warning("%s: ошибка — %s", p["name"], e)
-            continue
+                if _quality_check(whisper_text):
+                    log.info("%s: качество норм, берём", p["name"])
+                    return whisper_text
+                else:
+                    log.info("%s: качество низкое, пробуем следующий", p["name"])
+                    break
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "rate" in err_str.lower():
+                    wait = 5 * (attempt + 1)
+                    log.warning(
+                        "%s: rate limit, жду %d сек (попытка %d/3)",
+                        p["name"], wait, attempt + 1,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                log.warning("%s: ошибка — %s", p["name"], e)
+                break
 
     # Если Whisper не дал нормального текста — пробуем Gemini
     if GEMINI_API_KEY and not _quality_check(whisper_text):

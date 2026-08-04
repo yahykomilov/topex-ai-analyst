@@ -3,8 +3,10 @@
 #
 # Why stoic #3 — AI baholash sifati
 # Детальный парсинг критериев, улучшенный скоринг, fallback-модели.
+# Мульти-провайдер: Groq → OpenAI → Claude + retry с задержкой.
 """
 
+import asyncio
 import logging
 import re
 
@@ -16,7 +18,7 @@ from config import (
     ANTHROPIC_API_KEY,
     CLAUDE_MODEL,
     GROQ_ANALYSIS_MODEL,
-    GROQ_API_KEY,
+    GROQ_API_KEYS,
     GROQ_BASE_URL,
     OPENAI_API_KEY,
 )
@@ -35,38 +37,154 @@ from prompt import (
 log = logging.getLogger("analyzer")
 
 # ---------------------------------------------------------------------------
-# LLM Client init
-# Приоритет: OpenAI (основная) > Groq (бесплатный fallback) > Groq-8B (запасной)
-# Claude не в цепочке: клиент ещё не оплатил, ANTHROPIC_API_KEY пустой → путь не активен.
+# LLM Clients — собираем цепочку провайдеров
+# Приоритет: OpenAI (основная, если ключ задан) > Groq (бесплатный fallback) > Groq-8B (запасной)
+# Claude — не в цепочке: клиент ещё не оплатил, ANTHROPIC_API_KEY пустой → путь не активен.
 # ---------------------------------------------------------------------------
 GROQ_FALLBACK_MODEL = "llama-3.1-8b-instant"  # последний запасной на исчерпание лимита
 
-# цепочка (имя, клиент, модель) — перебираем по порядку при лимите/ошибке
-_LLM_CHAIN: list[tuple[str, AsyncOpenAI, str]] = []
+PROVIDERS: list[dict] = []
+
 if OPENAI_API_KEY:
-    _LLM_CHAIN.append(("OpenAI", AsyncOpenAI(api_key=OPENAI_API_KEY), ANALYSIS_MODEL))
-if GROQ_API_KEY:
-    _groq_client = AsyncOpenAI(api_key=GROQ_API_KEY, base_url=GROQ_BASE_URL)
-    _LLM_CHAIN.append(("Groq", _groq_client, GROQ_ANALYSIS_MODEL))
-    _LLM_CHAIN.append(("Groq fallback", _groq_client, GROQ_FALLBACK_MODEL))
+    PROVIDERS.append({
+        "name": "OpenAI",
+        "client": AsyncOpenAI(api_key=OPENAI_API_KEY),
+        "model": ANALYSIS_MODEL,
+        "max_input_tokens": 120000,
+    })
 
-if not _LLM_CHAIN:
-    raise RuntimeError(
-        "Нет ключа для анализа: задайте OPENAI_API_KEY или GROQ_API_KEY в .env"
+for i, key in enumerate(GROQ_API_KEYS):
+    PROVIDERS.append({
+        "name": f"Groq #{i+1}",
+        "client": AsyncOpenAI(api_key=key, base_url=GROQ_BASE_URL),
+        "model": GROQ_ANALYSIS_MODEL,
+        "max_input_tokens": 5500,
+    })
+
+# последний запасной: Groq-8B на исчерпание дневного лимита основной модели
+if GROQ_API_KEYS:
+    PROVIDERS.append({
+        "name": "Groq fallback",
+        "client": AsyncOpenAI(api_key=GROQ_API_KEYS[0], base_url=GROQ_BASE_URL),
+        "model": GROQ_FALLBACK_MODEL,
+        "max_input_tokens": 5500,
+    })
+
+# Claude — через прямой HTTP (отдельная логика) — добавляется как последний fallback, если ключ есть
+
+# Максимальное количество попыток retry на провайдере
+MAX_RETRIES = 2
+# Задержка между retry (секунды)
+RETRY_DELAY = 10
+
+# ---------------------------------------------------------------------------
+# ОСНОВНЫЕ ФУНКЦИИ (мульти-провайдер с retry)
+# ---------------------------------------------------------------------------
+
+
+async def _call_with_retry(
+    system_prompt: str, user_message: str, max_tokens: int = 4000
+) -> str:
+    """
+    Отправляет запрос через цепочку провайдеров: Groq → OpenAI → Claude.
+    На каждом провайдере — retry при rate limit (429) с задержкой.
+    """
+    last_error = None
+
+    for provider in PROVIDERS:
+        client: AsyncOpenAI = provider["client"]
+        model: str = provider["model"]
+        name: str = provider["name"]
+        max_input: int = provider.get("max_input_tokens", 60000)
+
+        # Обрезаем сообщение если модель не вмещает
+        effective_msg = user_message
+        if len(user_message) > max_input * 4:
+            effective_msg = _truncate_message(user_message, max_input)
+
+        for attempt in range(MAX_RETRIES + 1):
+            try:
+                log.info(
+                    "%s: попытка %d/%d, модель %s",
+                    name, attempt + 1, MAX_RETRIES + 1, model,
+                )
+                resp = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": effective_msg},
+                    ],
+                    temperature=0.3,
+                    max_tokens=max_tokens,
+                    timeout=180,
+                )
+                result = resp.choices[0].message.content or ""
+                if result.strip():
+                    log.info("%s: получен ответ (%d символов)", name, len(result))
+                    return result
+                log.warning("%s: пустой ответ, пробуем дальше", name)
+                break
+            except RateLimitError as e:
+                last_error = e
+                if attempt < MAX_RETRIES:
+                    wait = RETRY_DELAY * (attempt + 1)
+                    log.warning(
+                        "%s: rate limit (429), жду %d сек... (попытка %d/%d)",
+                        name, wait, attempt + 1, MAX_RETRIES,
+                    )
+                    await asyncio.sleep(wait)
+                else:
+                    log.warning("%s: все попытки исчерпаны (429)", name)
+                    break
+            except Exception as e:
+                last_error = e
+                log.error("%s: ошибка — %s", name, e)
+                # Для 413 (Payload Too Large) — обрезаем и повторяем
+                if "413" in str(e) or "too large" in str(e).lower():
+                    if effective_msg != user_message:
+                        log.info("%s: уже обрезано, пропускаю", name)
+                        break
+                    effective_msg = _truncate_message(user_message, max_input // 2)
+                    log.info("%s: обрезаю сообщение и повторяю", name)
+                    continue
+                break
+
+    # Claude — отдельная логика (прямой HTTP)
+    if ANTHROPIC_API_KEY:
+        try:
+            effective_msg = user_message
+            if len(user_message) > 30000:
+                effective_msg = _truncate_message(user_message, 25000)
+            result = await _analyze_claude(effective_msg, system_prompt, max_tokens)
+            if result.strip():
+                return result
+        except Exception as e:
+            log.error("Claude: ошибка — %s", e)
+            last_error = e
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("Все провайдеры анализа недоступны.")
+
+
+def _truncate_message(message: str, max_chars: int) -> str:
+    """Обрезает user message, сохраняя начало (мета) и конец (расшифровку)."""
+    if len(message) <= max_chars:
+        return message
+    # Оставляем 20% на мету в начале и 80% на конец расшифровки
+    header_size = max_chars // 5
+    tail_size = max_chars - header_size - 50
+    return (
+        message[:header_size]
+        + "\n\n... [текст обрезан для модели] ...\n\n"
+        + message[-tail_size:]
     )
-
-# ---------------------------------------------------------------------------
-# ОСНОВНЫЕ ФУНКЦИИ
-# ---------------------------------------------------------------------------
 
 
 async def analyze_transcript(transcript: str, meta: str = "") -> str:
     """Полный анализ звонка: возвращает отчёт по шаблону из SYSTEM_PROMPT."""
     user_message = build_user_message(transcript, meta)
-    if ANTHROPIC_API_KEY:
-        report = await _analyze_claude(user_message, SYSTEM_PROMPT)
-    else:
-        report = await _analyze_openai(user_message, SYSTEM_PROMPT)
+    report = await _call_with_retry(SYSTEM_PROMPT, user_message)
     return _sanitize(report)
 
 
@@ -76,10 +194,7 @@ async def team_report(facts: str, call_summaries: str) -> str:
         f"СТАТИСТИКА (посчитано точно):\n{facts}\n\n"
         f"ВЫЖИМКИ ИЗ АУДИТОВ ЗВОНКОВ ЗА ДЕНЬ:\n{call_summaries}"
     )
-    if ANTHROPIC_API_KEY:
-        report = await _analyze_claude(user_message, TEAM_PROMPT)
-    else:
-        report = await _analyze_openai(user_message, TEAM_PROMPT)
+    report = await _call_with_retry(TEAM_PROMPT, user_message)
     return _sanitize(report)
 
 
@@ -91,10 +206,7 @@ async def uz_tz(transcript: str) -> str:
         else transcript[:6500] + "\n...\n" + transcript[-2000:]
     )
     tz_message = f'Suhbat transkripti:\n"""\n{tz_source}\n"""'
-    if ANTHROPIC_API_KEY:
-        tz = await _analyze_claude(tz_message, UZ_TZ_PROMPT, max_tokens=1500)
-    else:
-        tz = await _analyze_openai(tz_message, UZ_TZ_PROMPT, max_tokens=1500)
+    tz = await _call_with_retry(UZ_TZ_PROMPT, tz_message, max_tokens=1500)
     return _sanitize(tz)
 
 
@@ -109,14 +221,7 @@ async def uz_document(transcript: str) -> str:
             else ""
         )
         user_message = f'{note}Transkript qismi:\n"""\n{chunk}\n"""'
-        if ANTHROPIC_API_KEY:
-            part = await _analyze_claude(
-                user_message, UZ_DIALOG_PROMPT, max_tokens=6000
-            )
-        else:
-            part = await _analyze_openai(
-                user_message, UZ_DIALOG_PROMPT, max_tokens=6000
-            )
+        part = await _call_with_retry(UZ_DIALOG_PROMPT, user_message, max_tokens=6000)
         dialog_parts.append(_sanitize(part))
     dialog = "\n".join(dialog_parts)
     tz = await uz_tz(transcript)
@@ -366,41 +471,10 @@ async def _analyze_openai(
     user_message: str, system_prompt: str, max_tokens: int = 4000
 ) -> str:
     """
-    Отправляет запрос по цепочке моделей: OpenAI (основная) → Groq → Groq fallback.
-    При RateLimitError/ошибке — автоматически переключается на следующую модель.
+    Совместимая обёртка: делегирует _call_with_retry (цепочка OpenAI → Groq → Groq fallback).
+    Сохранена для обратной совместимости вызовов дорожки B.
     """
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_message},
-    ]
-
-    last_error: Exception | None = None
-    for name, client, model in _LLM_CHAIN:
-        try:
-            log.info("Анализ через %s (%s)...", name, model)
-            resp = await client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0.3,
-                max_tokens=max_tokens,
-                timeout=180,
-            )
-            return resp.choices[0].message.content or ""
-        except RateLimitError as e:
-            last_error = e
-            log.warning("Лимит модели %s (%s) исчерпан", name, model)
-            continue
-        except Exception as e:
-            last_error = e
-            log.error("Ошибка модели %s (%s): %s", name, model, e)
-            continue
-
-    # Если все модели упали — пробрасываем последнюю ошибку
-    if last_error is not None:
-        raise last_error
-    raise RuntimeError("Пустая цепочка моделей для анализа")
-
-
+    return await _call_with_retry(system_prompt, user_message, max_tokens)
 async def _analyze_claude(
     user_message: str, system_prompt: str, max_tokens: int = 4000
 ) -> str:
