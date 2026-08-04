@@ -1,0 +1,42 @@
+services:
+  - type: worker
+    name: topex-ai-analyst
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_API_KEY_2
+        sync: false
+      - key: GROQ_API_KEY_3
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: AMO_SUBDOMAIN
+        sync: false
+      - key: AMO_ACCESS_TOKEN
+        sync: false
+      - key: WHISPER_LANGUAGE
+        value: uz
+      - key: MIN_CALL_DURATION
+        value: "20"
+      - key: POLL_INTERVAL
+        value: "120"
+      - key: ANALYSIS_MODEL
+        value: gpt-4o-mini
+      - key: GROQ_WHISPER_MODEL
+        value: whisper-large-v3-turbo
+      - key: GROQ_ANALYSIS_MODEL
+        value: llama-3.3-70b-versatile
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: MANAGER_WHITELIST
+        value: Durdona,Iroda,Ruxshona,Medine,Sarvinoz
+      - key: EXTRA_OWNER_IDS
+        value: "7836344818,8632648508,5921238772"
+    plan: free
