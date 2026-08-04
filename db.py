@@ -185,3 +185,48 @@ def stats_for(manager_id: str | None = None) -> dict:
         },
         "avg_score": round(avg, 1) if avg is not None else None,
     }
+
+
+def _empty_stats() -> dict:
+    return {
+        "total": 0,
+        "answered": 0,
+        "counts": {"ok": 0, "fail": 0, "doubt": 0, "noanswer": 0},
+        "percent": {"ok": 0, "fail": 0, "doubt": 0},
+        "avg_score": None,
+    }
+
+
+def stats_for_ids(manager_ids) -> dict:
+    """Сводная статистика по НЕСКОЛЬКИМ операторам (для филиала/роли).
+
+    Формат совпадает со stats_for(). Проценты — от отвеченных звонков.
+    """
+    ids = [str(i) for i in manager_ids if i is not None]
+    if not ids:
+        return _empty_stats()
+    ph = ",".join("?" * len(ids))
+    rows = _conn.execute(
+        f"SELECT verdict, COUNT(*) AS cnt FROM calls WHERE manager_id IN ({ph}) GROUP BY verdict",
+        ids,
+    ).fetchall()
+    counts = {"ok": 0, "fail": 0, "doubt": 0, "noanswer": 0}
+    for r in rows:
+        if r["verdict"] in counts:
+            counts[r["verdict"]] = r["cnt"]
+    answered = counts["ok"] + counts["fail"] + counts["doubt"]
+    total = answered + counts["noanswer"]
+    avg = _conn.execute(
+        f"SELECT AVG(score) FROM calls WHERE manager_id IN ({ph}) AND score IS NOT NULL",
+        ids,
+    ).fetchone()[0]
+    return {
+        "total": total,
+        "answered": answered,
+        "counts": counts,
+        "percent": {
+            k: (round(counts[k] * 100 / answered) if answered else 0)
+            for k in ("ok", "fail", "doubt")
+        },
+        "avg_score": round(avg, 1) if avg is not None else None,
+    }

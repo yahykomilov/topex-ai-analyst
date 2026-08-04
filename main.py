@@ -16,6 +16,7 @@ from aiogram.types import (
 )
 
 import amocrm
+import auth
 import db
 import i18n
 import pdf
@@ -94,6 +95,34 @@ def is_owner_chat(chat_id: int) -> bool:
     return state.get_owner() == chat_id or chat_id in EXTRA_OWNER_IDS
 
 
+# роль владельца — «видит всё» (совместимо с auth.visible_manager_ids)
+_OWNER_VIEW = {
+    "role": auth.OWNER, "branch_id": None, "operator_amo_id": None,
+    "full_name": "Владелец", "login": "owner",
+}
+
+
+def current_view_user(chat_id: int):
+    """Кто смотрит: владелец (полный доступ), вошедший по логину, либо None."""
+    if is_owner_chat(chat_id):
+        return _OWNER_VIEW
+    return auth.current_user(chat_id)
+
+
+def role_label(role: str) -> str:
+    return t({
+        auth.OPERATOR: "role_operator",
+        auth.ROP: "role_rop",
+        auth.DIRECTOR: "role_director",
+        auth.OWNER: "role_owner",
+    }.get(role, "role_operator"))
+
+
+def can_view_call(chat_id: int, call_row) -> bool:
+    vu = current_view_user(chat_id)
+    return vu is not None and auth.can_see_manager(vu, call_row["manager_id"])
+
+
 def fmt_dt(ts: int) -> str:
     if not ts:
         return "—"
@@ -169,18 +198,151 @@ async def cmd_start(message: Message) -> None:
     if owner is None:
         state.set_owner(message.chat.id)
         await message.answer(t("owner_set"))
-    elif owner != message.chat.id and message.chat.id not in EXTRA_OWNER_IDS:
-        await message.answer(t("private_bot"))
+    elif not is_owner_chat(message.chat.id) and auth.current_user(message.chat.id) is None:
+        await message.answer(t("need_login"))
         return
     await message.answer(t("menu_text"), reply_markup=main_menu_kb())
 
 
 @dp.message(Command("menu"))
 async def cmd_menu(message: Message) -> None:
-    if not is_owner_chat(message.chat.id):
+    if current_view_user(message.chat.id) is None:
+        await message.answer(t("need_login"))
         return
     pending_search.discard(message.chat.id)
     await message.answer(t("menu_text"), reply_markup=main_menu_kb())
+
+
+# ================== АВТОРИЗАЦИЯ (вход / выход) ==================
+
+@dp.message(Command("login", "kirish"))
+async def cmd_login(message: Message) -> None:
+    parts = (message.text or "").split()
+    if len(parts) < 3:
+        await message.answer(t("login_usage"))
+        return
+    login_name, password = parts[1], parts[2]
+    u = auth.login(message.chat.id, login_name, password)
+    # убираем сообщение с паролем из чата
+    try:
+        await message.delete()
+    except Exception:
+        pass
+    if u:
+        await message.answer(
+            t("login_ok", role=role_label(u["role"])), reply_markup=main_menu_kb()
+        )
+    else:
+        await message.answer(t("login_fail"))
+
+
+@dp.message(Command("logout", "chiqish"))
+async def cmd_logout(message: Message) -> None:
+    auth.logout(message.chat.id)
+    await message.answer(t("logout_ok"))
+
+
+@dp.message(Command("whoami"))
+async def cmd_whoami(message: Message) -> None:
+    if is_owner_chat(message.chat.id):
+        await message.answer(t("whoami_owner"))
+        return
+    u = auth.current_user(message.chat.id)
+    if u:
+        await message.answer(
+            t("whoami", name=u["full_name"] or u["login"], role=role_label(u["role"]))
+        )
+    else:
+        await message.answer(t("whoami_none"))
+
+
+# ================== НАСТРОЙКА РОЛЕЙ (только владелец) ==================
+
+@dp.message(Command("addbranch"))
+async def cmd_addbranch(message: Message) -> None:
+    if not is_owner_chat(message.chat.id):
+        await message.answer(t("owner_only"))
+        return
+    parts = (message.text or "").split(maxsplit=1)
+    if len(parts) < 2 or not parts[1].strip():
+        await message.answer(t("addbranch_usage"))
+        return
+    name = parts[1].strip()
+    bid = auth.create_branch(name)
+    await message.answer(t("branch_added", name=name, id=bid))
+
+
+@dp.message(Command("branches"))
+async def cmd_branches(message: Message) -> None:
+    if not is_owner_chat(message.chat.id):
+        await message.answer(t("owner_only"))
+        return
+    rows = auth.list_branches()
+    if not rows:
+        await message.answer(t("branches_empty"))
+        return
+    lines = [t("branches_title")] + [f"• {r['id']} — {r['name']}" for r in rows]
+    await message.answer("\n".join(lines))
+
+
+@dp.message(Command("adduser"))
+async def cmd_adduser(message: Message) -> None:
+    if not is_owner_chat(message.chat.id):
+        await message.answer(t("owner_only"))
+        return
+    parts = (message.text or "").split()
+    # /adduser логин пароль роль [id_филиала] [amo_id]
+    if len(parts) < 4:
+        await message.answer(t("adduser_usage"))
+        return
+    login_name, password, role = parts[1], parts[2], parts[3].lower()
+    if role not in (auth.OPERATOR, auth.ROP, auth.DIRECTOR):
+        await message.answer(t("adduser_bad_role"))
+        return
+    branch_id = int(parts[4]) if len(parts) >= 5 and parts[4].isdigit() else None
+    amo_id = parts[5] if len(parts) >= 6 else None
+    if auth.get_user_by_login(login_name):
+        await message.answer(t("user_exists", login=login_name))
+        return
+    try:
+        auth.create_user(
+            login_name, password, role, full_name=login_name,
+            branch_id=branch_id, operator_amo_id=amo_id,
+        )
+    except Exception as e:
+        await message.answer(t("error", error=e))
+        return
+    try:
+        await message.delete()  # в команде был пароль
+    except Exception:
+        pass
+    extra = ""
+    if branch_id:
+        extra += f" • филиал {branch_id}"
+    if amo_id:
+        extra += f" • amo {amo_id}"
+    await message.answer(
+        t("user_added", login=login_name, role=role_label(role), extra=extra)
+    )
+
+
+@dp.message(Command("users"))
+async def cmd_users(message: Message) -> None:
+    if not is_owner_chat(message.chat.id):
+        await message.answer(t("owner_only"))
+        return
+    rows = auth.list_users()
+    if not rows:
+        await message.answer(t("users_empty"))
+        return
+    lines = [t("users_title")]
+    for r in rows:
+        b = auth.branch_name(r["branch_id"]) if r["branch_id"] else "—"
+        lines.append(
+            f"• {r['login']} — {role_label(r['role'])} • филиал: {b}"
+            f" • amo: {r['operator_amo_id'] or '—'}"
+        )
+    await message.answer("\n".join(lines))
 
 
 def language_kb() -> InlineKeyboardMarkup:
@@ -246,8 +408,11 @@ async def cb_menu(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
-async def collect_managers() -> list[tuple[str, str, int]]:
-    """Сотрудники = все пользователи AmoCRM + все, у кого есть звонки в базе."""
+async def collect_managers(vu=None) -> list[tuple[str, str, int]]:
+    """Сотрудники = все пользователи AmoCRM + все, у кого есть звонки в базе.
+
+    Если задан vu (кто смотрит) — оставляем только операторов, видимых его роли.
+    """
     db_rows = {str(r["manager_id"]): (r["manager_name"], r["cnt"]) for r in db.managers()}
     entries: list[tuple[str, str, int]] = []
     if amo_enabled():
@@ -262,6 +427,11 @@ async def collect_managers() -> list[tuple[str, str, int]]:
     for mid, (name, cnt) in db_rows.items():
         if manager_allowed(name):
             entries.append((mid, name, cnt))
+    # скоуп по роли смотрящего: None = видит всех (владелец/директор)
+    vis = auth.visible_manager_ids(vu) if vu is not None else None
+    if vis is not None:
+        allow = {str(x) for x in vis}
+        entries = [e for e in entries if e[0] in allow]
     entries.sort(key=lambda x: -x[2])
     return entries
 
@@ -279,8 +449,12 @@ def managers_kb(entries: list[tuple[str, str, int]], with_search: bool) -> Inlin
 
 @dp.callback_query(F.data == "mgrs")
 async def cb_managers(cb: CallbackQuery) -> None:
+    vu = current_view_user(cb.message.chat.id)
+    if vu is None:
+        await cb.answer(t("need_login"), show_alert=True)
+        return
     pending_search.discard(cb.message.chat.id)
-    entries = await collect_managers()
+    entries = await collect_managers(vu)
 
     if not entries:
         await cb.message.edit_text(
@@ -305,9 +479,9 @@ async def cb_manager_search(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
-async def show_search_results(chat_id: int, query: str) -> None:
+async def show_search_results(chat_id: int, query: str, vu=None) -> None:
     needle = query.strip().casefold()
-    found = [e for e in await collect_managers() if needle in e[1].casefold()]
+    found = [e for e in await collect_managers(vu) if needle in e[1].casefold()]
     if not found:
         await bot.send_message(
             chat_id,
@@ -325,6 +499,10 @@ async def show_search_results(chat_id: int, query: str) -> None:
 @dp.callback_query(F.data.startswith("mgr:"))
 async def cb_manager(cb: CallbackQuery) -> None:
     _, manager_id, page_s = cb.data.split(":")
+    vu = current_view_user(cb.message.chat.id)
+    if vu is None or not auth.can_see_manager(vu, manager_id):
+        await cb.answer(t("access_denied"), show_alert=True)
+        return
     page = int(page_s)
     total = db.count_for(manager_id)
     calls = db.calls_for(manager_id, offset=page * PAGE_SIZE, limit=PAGE_SIZE)
@@ -390,6 +568,10 @@ def _day_bounds(day_key: str) -> tuple[int, int]:
 @dp.callback_query(F.data.startswith("dates:"))
 async def cb_dates(cb: CallbackQuery) -> None:
     manager_id = cb.data.split(":")[1]
+    vu = current_view_user(cb.message.chat.id)
+    if vu is None or not auth.can_see_manager(vu, manager_id):
+        await cb.answer(t("access_denied"), show_alert=True)
+        return
     date_counts: dict[str, int] = dict(db.dates_for(manager_id))
 
     # добавляем даты неразобранных звонков из CRM
@@ -438,6 +620,10 @@ async def cb_dates(cb: CallbackQuery) -> None:
 @dp.callback_query(F.data.startswith("mgrd:"))
 async def cb_manager_day(cb: CallbackQuery) -> None:
     _, manager_id, day_key = cb.data.split(":")
+    vu = current_view_user(cb.message.chat.id)
+    if vu is None or not auth.can_see_manager(vu, manager_id):
+        await cb.answer(t("access_denied"), show_alert=True)
+        return
     start_ts, end_ts = _day_bounds(day_key)
     day_label = datetime.strptime(day_key, "%Y%m%d").strftime("%d.%m.%Y")
 
@@ -578,6 +764,9 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
     if not c:
         await bot.send_message(chat_id, t("call_not_found"))
         return
+    if not can_view_call(chat_id, c):
+        await bot.send_message(chat_id, t("access_denied"))
+        return
 
     emoji = db.VERDICT_EMOJI.get(c["verdict"], "❓")
     score = f"{c['score']}/10" if c["score"] is not None else "—"
@@ -624,7 +813,13 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
     # 3. PDF со всем разбором
     await send_call_pdf(chat_id, c, uz)
 
-    kb = back_kb(f"mgr:{c['manager_id']}:0", t("btn_to_calls"))
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text=t("btn_dialog"), callback_data=f"txt:{c['id']}"),
+            InlineKeyboardButton(text=t("btn_report"), callback_data=f"rep:{c['id']}"),
+        ],
+        [InlineKeyboardButton(text=t("btn_to_calls"), callback_data=f"mgr:{c['manager_id']}:0")],
+    ])
     if uz:
         await send_long(chat_id, uz, reply_markup=kb)
     else:
@@ -645,6 +840,9 @@ async def cb_transcript(cb: CallbackQuery) -> None:
     if not c:
         await cb.answer(t("call_not_found"))
         return
+    if not can_view_call(cb.message.chat.id, c):
+        await cb.answer(t("access_denied"), show_alert=True)
+        return
     await cb.answer()
     text = c["transcript"] or t("transcript_missing")
     await send_long(
@@ -661,6 +859,9 @@ async def cb_report(cb: CallbackQuery) -> None:
     if not c:
         await cb.answer(t("call_not_found"))
         return
+    if not can_view_call(cb.message.chat.id, c):
+        await cb.answer(t("access_denied"), show_alert=True)
+        return
     await cb.answer()
     await send_long(
         cb.message.chat.id,
@@ -671,31 +872,52 @@ async def cb_report(cb: CallbackQuery) -> None:
 
 @dp.callback_query(F.data == "stats")
 async def cb_stats(cb: CallbackQuery) -> None:
-    total_stats = db.stats_for()
-    lines = [t("stats_title"), i18n.format_stats(total_stats)]
+    vu = current_view_user(cb.message.chat.id)
+    if vu is None:
+        await cb.answer(t("need_login"), show_alert=True)
+        return
+    vis = auth.visible_manager_ids(vu)  # None = все (владелец/директор)
+    lines = [t("stats_title")]
+    scope_stats = db.stats_for() if vis is None else db.stats_for_ids(vis)
+    lines.append(i18n.format_stats(scope_stats))
+
+    # директор/владелец — разрез по филиалам
+    if vu["role"] in (auth.OWNER, auth.DIRECTOR):
+        branches = auth.list_branches()
+        if branches:
+            lines.append(t("stats_by_branch"))
+            for b in branches:
+                s = db.stats_for_ids(auth.branch_operator_ids(b["id"]))
+                avg = (
+                    t("stats_manager_avg", avg=s["avg_score"])
+                    if s["avg_score"] is not None else ""
+                )
+                lines.append(t(
+                    "stats_branch_line", name=b["name"], total=s["total"],
+                    answered=s["answered"], noanswer=s["counts"]["noanswer"],
+                    ok=s["percent"]["ok"], fail=s["percent"]["fail"],
+                    doubt=s["percent"]["doubt"], avg=avg,
+                ))
+
+    # по сотрудникам — в пределах видимости роли
     rows = [r for r in db.managers() if manager_allowed(r["manager_name"])]
+    if vis is not None:
+        allow = {str(x) for x in vis}
+        rows = [r for r in rows if str(r["manager_id"]) in allow]
     if rows:
         lines.append(t("stats_by_manager"))
         for r in rows:
             s = db.stats_for(r["manager_id"])
             avg = (
                 t("stats_manager_avg", avg=s["avg_score"])
-                if s["avg_score"] is not None
-                else ""
+                if s["avg_score"] is not None else ""
             )
-            lines.append(
-                t(
-                    "stats_manager_line",
-                    name=r["manager_name"],
-                    total=s["total"],
-                    answered=s.get("answered", 0),
-                    noanswer=s["counts"].get("noanswer", 0),
-                    ok=s["percent"]["ok"],
-                    fail=s["percent"]["fail"],
-                    doubt=s["percent"]["doubt"],
-                    avg=avg,
-                )
-            )
+            lines.append(t(
+                "stats_manager_line", name=r["manager_name"], total=s["total"],
+                answered=s.get("answered", 0), noanswer=s["counts"].get("noanswer", 0),
+                ok=s["percent"]["ok"], fail=s["percent"]["fail"],
+                doubt=s["percent"]["doubt"], avg=avg,
+            ))
     await cb.message.edit_text("\n".join(lines), reply_markup=back_kb("menu", t("btn_menu")))
     await cb.answer()
 
@@ -768,6 +990,10 @@ async def build_daily_report() -> str | None:
 
 @dp.callback_query(F.data == "daily")
 async def cb_daily(cb: CallbackQuery) -> None:
+    vu = current_view_user(cb.message.chat.id)
+    if vu is None or vu["role"] not in (auth.OWNER, auth.DIRECTOR):
+        await cb.answer(t("daily_denied"), show_alert=True)
+        return
     await cb.answer(t("daily_preparing"))
     msg = await bot.send_message(cb.message.chat.id, t("daily_building"))
     try:
@@ -863,15 +1089,21 @@ async def handle_file(message: Message) -> None:
 
 @dp.message(F.text)
 async def handle_text(message: Message) -> None:
-    if not is_owner_chat(message.chat.id):
-        await message.answer(t("private_hint"))
+    vu = current_view_user(message.chat.id)
+    if vu is None:
+        await message.answer(t("need_login"))
         return
     text = message.text.strip()
 
     # ждём имя сотрудника после кнопки «Поиск по имени»
     if message.chat.id in pending_search:
         pending_search.discard(message.chat.id)
-        await show_search_results(message.chat.id, text)
+        await show_search_results(message.chat.id, text, vu)
+        return
+
+    # ручной аудит текста — только владелец
+    if not is_owner_chat(message.chat.id):
+        await message.answer(t("private_hint"))
         return
 
     if len(text) < 100:

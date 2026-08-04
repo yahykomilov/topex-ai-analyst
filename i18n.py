@@ -24,6 +24,8 @@ TEXTS = {
         "btn_other_date": "📅 Другая дата",
         "btn_search": "🔍 Поиск по имени",
         "btn_audio_tz": "📋 Аудио + ТЗ (узбекча)",
+        "btn_dialog": "💬 Диалог",
+        "btn_report": "📄 Полный разбор",
         "menu_text": (
             "📋 Главное меню\n\n"
             "👥 Сотрудники — выберите менеджера, посмотрите его звонки, разбор AI и статистику.\n"
@@ -37,6 +39,40 @@ TEXTS = {
         "owner_set": "✅ Вы назначены владельцем бота.",
         "private_bot": "⛔ Бот приватный и уже привязан к другому пользователю.",
         "private_hint": "⛔ Бот приватный. Отправьте /start, если вы владелец.",
+        # --- роли и вход ---
+        "need_login": "🔐 Нужно войти. Отправьте: /login логин пароль\n(логин и пароль выдаёт руководитель).",
+        "login_usage": "Использование: /login логин пароль",
+        "login_ok": "✅ Вход выполнен. Ваша роль: {role}.",
+        "login_fail": "⛔ Неверный логин или пароль.",
+        "logout_ok": "👋 Вы вышли. Чтобы войти снова: /login логин пароль",
+        "access_denied": "⛔ Нет доступа к этим данным.",
+        "whoami": "Вы вошли как {name} • роль: {role}.",
+        "whoami_owner": "Вы — владелец бота (полный доступ).",
+        "whoami_none": "Вы не вошли. Отправьте: /login логин пароль",
+        "role_operator": "оператор",
+        "role_rop": "РОП (руководитель отдела)",
+        "role_director": "директор",
+        "role_owner": "владелец",
+        # --- команды владельца (настройка ролей) ---
+        "owner_only": "⛔ Команда доступна только владельцу.",
+        "addbranch_usage": "Использование: /addbranch название филиала",
+        "branch_added": "✅ Филиал добавлен: {name} (id {id}).",
+        "branches_title": "🏢 Филиалы:",
+        "branches_empty": "Филиалов пока нет. Добавить: /addbranch название",
+        "adduser_usage": (
+            "Использование: /adduser логин пароль роль [id_филиала] [amo_id_оператора]\n"
+            "роли: operator (оператор) / rop (РОП) / director (директор)\n"
+            "Пример оператора: /adduser durdona 1234 operator 1 7621234"
+        ),
+        "adduser_bad_role": "⛔ Роль должна быть: operator, rop или director.",
+        "user_added": "✅ Пользователь создан: {login} • роль {role}{extra}.",
+        "user_exists": "⛔ Логин «{login}» уже занят.",
+        "users_title": "👤 Пользователи:",
+        "users_empty": "Пользователей пока нет. Добавить: /adduser ...",
+        "daily_denied": "⛔ Отчёт за день доступен директору и владельцу.",
+        # --- статистика по филиалам (директор) ---
+        "stats_by_branch": "\n🏢 По филиалам:",
+        "stats_branch_line": "• {name}: {total} зв. (☎️{answered}/📵{noanswer}), ✅{ok}% ❌{fail}% ❓{doubt}%{avg}",
         # --- язык ---
         "lang_prompt": "🌐 Выберите язык интерфейса:",
         "lang_changed": "✅ Язык интерфейса: Русский",
@@ -185,6 +221,8 @@ TEXTS = {
         "btn_other_date": "📅 Boshqa sana",
         "btn_search": "🔍 Ism bo'yicha qidirish",
         "btn_audio_tz": "📋 Audio + TZ (o'zbekcha)",
+        "btn_dialog": "💬 Dialog",
+        "btn_report": "📄 To'liq tahlil",
         "menu_text": (
             "📋 Asosiy menyu\n\n"
             "👥 Xodimlar — menejerni tanlang, uning qo'ng'iroqlari, AI tahlili va "
@@ -199,6 +237,40 @@ TEXTS = {
         "owner_set": "✅ Siz bot egasi etib tayinlandingiz.",
         "private_bot": "⛔ Bot shaxsiy va allaqachon boshqa foydalanuvchiga biriktirilgan.",
         "private_hint": "⛔ Bot shaxsiy. Agar egasi bo'lsangiz, /start yuboring.",
+        # --- rollar va kirish ---
+        "need_login": "🔐 Kirish kerak. Yuboring: /login login parol\n(login va parolni rahbaringiz beradi).",
+        "login_usage": "Foydalanish: /login login parol",
+        "login_ok": "✅ Kirdingiz. Rolingiz: {role}.",
+        "login_fail": "⛔ Login yoki parol noto'g'ri.",
+        "logout_ok": "👋 Chiqdingiz. Qayta kirish: /login login parol",
+        "access_denied": "⛔ Bu ma'lumotlarga ruxsat yo'q.",
+        "whoami": "Siz {name} sifatida kirgansiz • rol: {role}.",
+        "whoami_owner": "Siz bot egasisiz (to'liq ruxsat).",
+        "whoami_none": "Siz kirmagansiz. Yuboring: /login login parol",
+        "role_operator": "operator",
+        "role_rop": "ROP (savdo bo'limi rahbari)",
+        "role_director": "direktor",
+        "role_owner": "ega",
+        # --- ega buyruqlari (rollarni sozlash) ---
+        "owner_only": "⛔ Buyruq faqat ega uchun.",
+        "addbranch_usage": "Foydalanish: /addbranch filial nomi",
+        "branch_added": "✅ Filial qo'shildi: {name} (id {id}).",
+        "branches_title": "🏢 Filiallar:",
+        "branches_empty": "Hozircha filial yo'q. Qo'shish: /addbranch nomi",
+        "adduser_usage": (
+            "Foydalanish: /adduser login parol rol [filial_id] [operator_amo_id]\n"
+            "rollar: operator / rop / director\n"
+            "Operator misoli: /adduser durdona 1234 operator 1 7621234"
+        ),
+        "adduser_bad_role": "⛔ Rol: operator, rop yoki director bo'lishi kerak.",
+        "user_added": "✅ Foydalanuvchi yaratildi: {login} • rol {role}{extra}.",
+        "user_exists": "⛔ «{login}» login band.",
+        "users_title": "👤 Foydalanuvchilar:",
+        "users_empty": "Hozircha foydalanuvchi yo'q. Qo'shish: /adduser ...",
+        "daily_denied": "⛔ Kunlik hisobot direktor va ega uchun.",
+        # --- filiallar bo'yicha statistika (direktor) ---
+        "stats_by_branch": "\n🏢 Filiallar bo'yicha:",
+        "stats_branch_line": "• {name}: {total} qo'ng'. (☎️{answered}/📵{noanswer}), ✅{ok}% ❌{fail}% ❓{doubt}%{avg}",
         # --- til ---
         "lang_prompt": "🌐 Interfeys tilini tanlang:",
         "lang_changed": "✅ Interfeys tili: O'zbekcha",
