@@ -475,6 +475,7 @@ async def _analyze_openai(
     Сохранена для обратной совместимости вызовов дорожки B.
     """
     return await _call_with_retry(system_prompt, user_message, max_tokens)
+
 async def _analyze_claude(
     user_message: str, system_prompt: str, max_tokens: int = 4000
 ) -> str:
