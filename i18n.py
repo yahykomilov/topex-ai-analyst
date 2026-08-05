@@ -38,6 +38,9 @@ TEXTS = {
         "private_bot": "⛔ Бот приватный и уже привязан к другому пользователю.",
         "private_hint": "⛔ Бот приватный. Отправьте /start, если вы владелец.",
         # --- роли и вход ---
+        "auth_greeting": "👋 Здравствуйте! Это бот Topex AI Analyst.",
+        "auth_ask_login": "Введите ваш логин:",
+        "auth_ask_password": "🔒 Введите пароль (сообщение удалится сразу после проверки):",
         "need_login": "🔐 Нужно войти. Отправьте: /login логин пароль\n(логин и пароль выдаёт руководитель).",
         "login_usage": "Использование: /login логин пароль",
         "login_ok": "✅ Вход выполнен. Ваша роль: {role}.",
@@ -235,6 +238,9 @@ TEXTS = {
         "private_bot": "⛔ Bot shaxsiy va allaqachon boshqa foydalanuvchiga biriktirilgan.",
         "private_hint": "⛔ Bot shaxsiy. Agar egasi bo'lsangiz, /start yuboring.",
         # --- rollar va kirish ---
+        "auth_greeting": "👋 Assalomu aleykum! Bu Topex AI Analyst boti.",
+        "auth_ask_login": "Loginingizni kiriting:",
+        "auth_ask_password": "🔒 Parolni kiriting (tekshiruvdan keyin xabar darhol o'chiriladi):",
         "need_login": "🔐 Kirish kerak. Yuboring: /login login parol\n(login va parolni rahbaringiz beradi).",
         "login_usage": "Foydalanish: /login login parol",
         "login_ok": "✅ Kirdingiz. Rolingiz: {role}.",
@@ -567,6 +573,9 @@ TEXTS = {
             7: "no conn.",
         },
         # --- auth and roles ---
+        "auth_greeting": "👋 Hello! This is the Topex AI Analyst bot.",
+        "auth_ask_login": "Enter your login:",
+        "auth_ask_password": "🔒 Enter your password (this message will be deleted right after checking):",
         "need_login": "🔐 You need to log in. Send: /login login password\n(your manager gives you the login and password).",
         "login_usage": "Usage: /login login password",
         "login_ok": "✅ Logged in. Your role: {role}.",

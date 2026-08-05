@@ -66,6 +66,9 @@ PAGE_SIZE = 8
 # чаты, от которых ждём имя сотрудника для поиска (следующим сообщением)
 pending_search: set[int] = set()
 
+# чаты в процессе входа: None = ждём логин, "имя_логина" = ждём пароль под этот логин
+pending_login: dict[int, str | None] = {}
+
 
 # ================== ВСПОМОГАТЕЛЬНОЕ ==================
 
@@ -200,22 +203,41 @@ def back_kb(callback_data: str = "mgrs", text: str | None = None) -> InlineKeybo
 
 # ================== КОМАНДЫ ==================
 
+def login_lang_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=label, callback_data=f"setlang:{code}")]
+        for code, label in i18n.LANGUAGES.items()
+    ])
+
+
+async def begin_login_flow(chat_id: int) -> None:
+    """Здравствуйте / Assalomu aleykum / Hello → просим логин, затем пароль."""
+    pending_login[chat_id] = None
+    await bot.send_message(
+        chat_id,
+        f"{t('auth_greeting')}\n\n{t('auth_ask_login')}",
+        reply_markup=login_lang_kb(),
+    )
+
+
 @dp.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     owner = state.get_owner()
     if owner is None:
         state.set_owner(message.chat.id)
         await message.answer(t("owner_set"))
-    elif not is_owner_chat(message.chat.id) and auth.current_user(message.chat.id) is None:
-        await message.answer(t("need_login"))
+        await message.answer(t("menu_text"), reply_markup=main_menu_kb())
         return
-    await message.answer(t("menu_text"), reply_markup=main_menu_kb())
+    if is_owner_chat(message.chat.id) or auth.current_user(message.chat.id) is not None:
+        await message.answer(t("menu_text"), reply_markup=main_menu_kb())
+        return
+    await begin_login_flow(message.chat.id)
 
 
 @dp.message(Command("menu"))
 async def cmd_menu(message: Message) -> None:
     if current_view_user(message.chat.id) is None:
-        await message.answer(t("need_login"))
+        await begin_login_flow(message.chat.id)
         return
     pending_search.discard(message.chat.id)
     await message.answer(t("menu_text"), reply_markup=main_menu_kb())
@@ -384,6 +406,12 @@ async def cb_set_language(cb: CallbackQuery) -> None:
         return
     i18n.set_lang(lang)
     await cb.answer(t("lang_changed"))
+    chat_id = cb.message.chat.id
+    if chat_id in pending_login:
+        step = pending_login[chat_id]
+        text = f"{t('auth_greeting')}\n\n{t('auth_ask_login')}" if step is None else t("auth_ask_password")
+        await cb.message.edit_text(text, reply_markup=login_lang_kb())
+        return
     await cb.message.edit_text(t("menu_text"), reply_markup=main_menu_kb())
 
 
@@ -1131,11 +1159,35 @@ async def handle_file(message: Message) -> None:
 
 @dp.message(F.text)
 async def handle_text(message: Message) -> None:
-    vu = current_view_user(message.chat.id)
-    if vu is None:
-        await message.answer(t("need_login"))
-        return
+    chat_id = message.chat.id
     text = message.text.strip()
+
+    if chat_id in pending_login:
+        step = pending_login[chat_id]
+        if step is None:
+            pending_login[chat_id] = text
+            await message.answer(t("auth_ask_password"))
+            return
+        login_name, password = step, text
+        u = auth.login(chat_id, login_name, password)
+        del pending_login[chat_id]
+        try:
+            await message.delete()  # убираем пароль из чата
+        except Exception:
+            pass
+        if u:
+            await bot.send_message(
+                chat_id, t("login_ok", role=role_label(u["role"])), reply_markup=main_menu_kb()
+            )
+        else:
+            await bot.send_message(chat_id, t("login_fail"))
+            await begin_login_flow(chat_id)
+        return
+
+    vu = current_view_user(chat_id)
+    if vu is None:
+        await begin_login_flow(chat_id)
+        return
 
     # ждём имя сотрудника после кнопки «Поиск по имени»
     if message.chat.id in pending_search:
