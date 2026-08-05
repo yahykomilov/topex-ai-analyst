@@ -104,6 +104,13 @@ def branch_name(branch_id) -> str:
     return row["name"] if row else ""
 
 
+def branch_exists(branch_id) -> bool:
+    return (
+        _conn.execute("SELECT 1 FROM branches WHERE id = ?", (branch_id,)).fetchone()
+        is not None
+    )
+
+
 # --------------------------------------------------------------------------
 # Пользователи
 # --------------------------------------------------------------------------
@@ -161,6 +168,31 @@ def get_user_by_login(login: str):
     return _conn.execute(
         "SELECT * FROM app_users WHERE login=? AND active=1", (login.strip().lower(),)
     ).fetchone()
+
+
+def find_login(login: str):
+    """Учётка по логину, включая отключённые (чтобы отличить «выключен» от «пароль неверный»)."""
+    return _conn.execute(
+        "SELECT * FROM app_users WHERE login=?", (login.strip().lower(),)
+    ).fetchone()
+
+
+def set_branch(user_id: int, branch_id) -> None:
+    with _lock:
+        _conn.execute(
+            "UPDATE app_users SET branch_id=? WHERE id=?", (branch_id, user_id)
+        )
+        _conn.commit()
+
+
+def bind_operator(user_id: int, operator_amo_id) -> None:
+    """Привязывает учётку оператора к его id в amoCRM (calls.manager_id)."""
+    with _lock:
+        _conn.execute(
+            "UPDATE app_users SET operator_amo_id=? WHERE id=?",
+            (str(operator_amo_id) if operator_amo_id is not None else None, user_id),
+        )
+        _conn.commit()
 
 
 def list_users(role: str | None = None) -> list:
@@ -254,3 +286,58 @@ def branch_operator_ids(branch_id) -> list:
 def has_any_users() -> bool:
     """Заведён ли хоть один пользователь (для онбординга владельца)."""
     return _conn.execute("SELECT 1 FROM app_users LIMIT 1").fetchone() is not None
+
+
+# --------------------------------------------------------------------------
+# Филиалы ↔ операторы (для экранов директора и РОПа)
+# --------------------------------------------------------------------------
+def list_operators(branch_id=None) -> list:
+    """Учётки операторов: всех или одного филиала."""
+    if branch_id is None:
+        return _conn.execute(
+            "SELECT * FROM app_users WHERE role=? AND active=1 ORDER BY full_name, login",
+            (OPERATOR,),
+        ).fetchall()
+    return _conn.execute(
+        "SELECT * FROM app_users WHERE role=? AND branch_id=? AND active=1 "
+        "ORDER BY full_name, login",
+        (OPERATOR, branch_id),
+    ).fetchall()
+
+
+def branches_with_operators() -> list:
+    """[(branch_id, name, [operator_amo_id, ...]), ...] — основа сводки директора."""
+    out = []
+    for b in list_branches():
+        out.append((b["id"], b["name"], branch_operator_ids(b["id"])))
+    return out
+
+
+def branch_of_manager(manager_id):
+    """(branch_id, branch_name) оператора по его amoCRM-id; (None, "") если не привязан."""
+    row = _conn.execute(
+        "SELECT branch_id FROM app_users WHERE role=? AND operator_amo_id=? LIMIT 1",
+        (OPERATOR, str(manager_id)),
+    ).fetchone()
+    if not row or row["branch_id"] is None:
+        return None, ""
+    return row["branch_id"], branch_name(row["branch_id"])
+
+
+def assigned_operator_ids() -> set:
+    """Все amoCRM-id, уже привязанные к какому-нибудь филиалу."""
+    rows = _conn.execute(
+        "SELECT operator_amo_id FROM app_users "
+        "WHERE role=? AND operator_amo_id IS NOT NULL AND branch_id IS NOT NULL",
+        (OPERATOR,),
+    ).fetchall()
+    return {str(r["operator_amo_id"]) for r in rows}
+
+
+def operator_name(manager_id) -> str:
+    """ФИО оператора из учётки (если заведена) — иначе пусто."""
+    row = _conn.execute(
+        "SELECT full_name FROM app_users WHERE role=? AND operator_amo_id=? LIMIT 1",
+        (OPERATOR, str(manager_id)),
+    ).fetchone()
+    return row["full_name"] if row else ""

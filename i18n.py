@@ -181,6 +181,109 @@ TEXTS = {
         "role_rop": "РОП",
         "role_director": "Директор",
         "role_owner": "Владелец",
+        "auth_already_logged": "Вы уже вошли как {name} ({role}). Сменить: /logout",
+        "auth_operator_unbound": (
+            "⚠️ Ваша учётка ещё не привязана к оператору в amoCRM — звонков не видно.\n"
+            "Попросите руководителя выполнить: /bind <ваш логин> <id в amoCRM>"
+        ),
+        "auth_login_hint": "🔒 Вход: /login — или /login <логин> <пароль> одной строкой.",
+        # --- экраны по ролям (директор / РОП / оператор) ---
+        "menu_role_line": "👤 {name} • {role}{branch}",
+        "menu_branch_suffix": " • филиал: {branch}",
+        "menu_text_rop": (
+            "📋 Меню РОПа\n\n"
+            "👥 Мои операторы — рейтинг операторов филиала, их звонки и разбор AI.\n"
+            "📊 Статистика филиала — итоги по вашему филиалу.\n"
+            "⚠️ Ошибки филиала — звонки, где операторы ошиблись.\n"
+            "📈 Отчёт за день — по вашему филиалу."
+        ),
+        "menu_text_operator": (
+            "📋 Моё меню\n\n"
+            "📞 Мои звонки — список ваших разговоров с оценкой и разбором AI.\n"
+            "📊 Моя статистика — успешные / неуспешные / недозвоны и средний балл.\n"
+            "⚠️ Мои ошибки — звонки, где AI нашёл ошибки: что именно и как исправить.\n"
+            "📈 Мой отчёт за день — итоги вашего дня."
+        ),
+        "btn_branches": "🏢 Сводка по филиалам",
+        "btn_branch_stats": "📊 Статистика филиала",
+        "btn_branch_team": "👥 Мои операторы",
+        "btn_dept_total": "📊 Итого по отделу",
+        "btn_my_calls": "📞 Мои звонки",
+        "btn_my_stats": "📊 Моя статистика",
+        "btn_my_errors": "⚠️ Мои ошибки",
+        "btn_errors": "⚠️ Ошибки",
+        "btn_branch_errors": "⚠️ Ошибки филиала",
+        "btn_to_branches": "⬅️ К филиалам",
+        # сводка директора
+        "branches_title": "🏢 Сводка по филиалам\n",
+        "branches_empty": (
+            "Филиалы ещё не заведены.\n\n"
+            "Владелец: /branch_add <название> — создать филиал, "
+            "/user_add — завести пользователя, /bind — привязать оператора к amoCRM."
+        ),
+        "branch_line": (
+            "🏢 {name} — {operators} оп., {total} зв. (☎️{answered} / 📵{noanswer})\n"
+            "   ✅{ok}% ❌{fail}% ❓{doubt}%{avg}"
+        ),
+        "branch_avg_suffix": " • ср. балл {avg}/10",
+        "branch_no_calls": "   пока нет разобранных звонков",
+        "branch_best": "🥇 Лучше всех: {name} ({avg}/10)",
+        "branch_worst": "🔻 Слабее всех: {name} ({avg}/10)",
+        "branch_unassigned": "\n⚠️ Операторов без филиала: {count} (привязать: /bind)",
+        "branch_title": "🏢 {name}\n",
+        "branch_no_operators": (
+            "В этом филиале ещё нет привязанных операторов.\n"
+            "Владелец: /user_add <логин> <пароль> operator <id филиала> <id в amoCRM> <ФИО>"
+        ),
+        "branch_pick_operator": "\n👥 Операторы (нажмите — звонки и разбор):",
+        "branch_not_found": "Филиал не найден.",
+        "rop_no_branch": (
+            "⚠️ К вашей учётке не привязан филиал. Обратитесь к владельцу бота."
+        ),
+        # экран оператора
+        "my_stats_title": "👤 {name} — моя статистика\n",
+        "my_no_calls": "Разобранных звонков пока нет.",
+        # ошибки
+        "errors_title": "⚠️ Звонки с ошибками (❌ неуспешные и ❓ под вопросом)",
+        "errors_hint": "Откройте звонок — в разборе AI указано, где именно ошибка.",
+        "errors_empty": "✅ Звонков с ошибками не найдено.",
+        # отчёт за день по ролям
+        "daily_scope_all": "📈 Отчёт за день — весь отдел",
+        "daily_scope_branch": "📈 Отчёт за день — филиал «{branch}»",
+        "daily_scope_own": "📈 Отчёт за день — {name}",
+        "daily_empty_scoped": "За сегодня у вас пока нет разобранных звонков.",
+        # --- команды владельца (настройка ролей) ---
+        "admin_only": "🚫 Команда доступна только владельцу бота.",
+        "admin_usage_branch_add": "Использование: /branch_add <название филиала>",
+        "admin_branch_added": "✅ Филиал «{name}» заведён (id={id}).",
+        "admin_branches": "🏢 Филиалы (id — название — операторов):",
+        "admin_branches_empty": "Филиалов пока нет. Создать: /branch_add <название>",
+        "admin_usage_user_add": (
+            "Использование:\n"
+            "/user_add <логин> <пароль> <роль> <id филиала|-> <amo_id|-> <ФИО>\n\n"
+            "Роли: operator, rop, director, owner\n"
+            "Примеры:\n"
+            "/user_add boss 1234 director - - Директор Topex\n"
+            "/user_add rop1 1234 rop 1 - РОП Юнусабада\n"
+            "/user_add durdona 1234 operator 1 6284739 Durdona"
+        ),
+        "admin_user_added": "✅ {login} — {role} {extra} заведён(а).",
+        "admin_user_exists": "⚠️ Логин {login} уже занят.",
+        "admin_users": "👤 Пользователи (логин — роль — филиал — amo_id):",
+        "admin_users_empty": "Пользователей пока нет. Завести: /user_add",
+        "admin_user_not_found": "⚠️ Пользователь «{login}» не найден.",
+        "admin_bad_role": "⚠️ Роль должна быть одной из: operator, rop, director, owner.",
+        "admin_bad_branch": "⚠️ Филиал с id={id} не найден. Список: /branches",
+        "admin_usage_bind": "Использование: /bind <логин> <id оператора в amoCRM>",
+        "admin_bound": "✅ {login} привязан к оператору amoCRM id={amo_id}.",
+        "admin_usage_passwd": "Использование: /passwd <логин> <новый пароль>",
+        "admin_passwd_ok": "✅ Пароль для {login} обновлён.",
+        "admin_usage_access": "Использование: /user_off <логин> или /user_on <логин>",
+        "admin_access_on": "✅ {login}: доступ включён.",
+        "admin_access_off": "⛔ {login}: доступ отключён.",
+        "admin_amo_ids": "🆔 Сотрудники amoCRM (id — имя — разобранных звонков):",
+        "admin_amo_ids_empty": "Сотрудники из amoCRM не получены (CRM не подключена?).",
+        "admin_inactive_mark": " (отключён)",
     },
     "uz": {
         # --- menyu va tugmalar ---
@@ -362,6 +465,107 @@ TEXTS = {
         "role_rop": "ROP",
         "role_director": "Direktor",
         "role_owner": "Egasi",
+        "auth_already_logged": "Siz allaqachon {name} ({role}) sifatida kirgansiz. O'zgartirish: /logout",
+        "auth_operator_unbound": (
+            "⚠️ Hisobingiz amoCRM operatoriga bog'lanmagan — qo'ng'iroqlar ko'rinmaydi.\n"
+            "Rahbaringizdan so'rang: /bind <loginingiz> <amoCRM id>"
+        ),
+        "auth_login_hint": "🔒 Kirish: /login — yoki bitta qatorda /login <login> <parol>.",
+        # --- rollar bo'yicha ekranlar (direktor / ROP / operator) ---
+        "menu_role_line": "👤 {name} • {role}{branch}",
+        "menu_branch_suffix": " • filial: {branch}",
+        "menu_text_rop": (
+            "📋 ROP menyusi\n\n"
+            "👥 Mening operatorlarim — filial operatorlari reytingi, qo'ng'iroqlari va AI tahlili.\n"
+            "📊 Filial statistikasi — filialingiz bo'yicha yakun.\n"
+            "⚠️ Filial xatolari — operatorlar xato qilgan qo'ng'iroqlar.\n"
+            "📈 Kunlik hisobot — filialingiz bo'yicha."
+        ),
+        "menu_text_operator": (
+            "📋 Mening menyum\n\n"
+            "📞 Mening qo'ng'iroqlarim — suhbatlaringiz ro'yxati, baho va AI tahlili.\n"
+            "📊 Mening statistikam — muvaffaqiyatli / muvaffaqiyatsiz / javobsiz va o'rtacha ball.\n"
+            "⚠️ Mening xatolarim — AI xato topgan qo'ng'iroqlar: nima va qanday tuzatish kerak.\n"
+            "📈 Kunlik hisobotim — kuningiz yakuni."
+        ),
+        "btn_branches": "🏢 Filiallar bo'yicha yakun",
+        "btn_branch_stats": "📊 Filial statistikasi",
+        "btn_branch_team": "👥 Mening operatorlarim",
+        "btn_dept_total": "📊 Bo'lim bo'yicha jami",
+        "btn_my_calls": "📞 Mening qo'ng'iroqlarim",
+        "btn_my_stats": "📊 Mening statistikam",
+        "btn_my_errors": "⚠️ Mening xatolarim",
+        "btn_errors": "⚠️ Xatolar",
+        "btn_branch_errors": "⚠️ Filial xatolari",
+        "btn_to_branches": "⬅️ Filiallarga",
+        # direktor yakuni
+        "branches_title": "🏢 Filiallar bo'yicha yakun\n",
+        "branches_empty": (
+            "Filiallar hali kiritilmagan.\n\n"
+            "Egasi uchun: /branch_add <nomi> — filial yaratish, "
+            "/user_add — foydalanuvchi qo'shish, /bind — operatorni amoCRM'ga bog'lash."
+        ),
+        "branch_line": (
+            "🏢 {name} — {operators} operator, {total} qo'ng'iroq (☎️{answered} / 📵{noanswer})\n"
+            "   ✅{ok}% ❌{fail}% ❓{doubt}%{avg}"
+        ),
+        "branch_avg_suffix": " • o'rtacha ball {avg}/10",
+        "branch_no_calls": "   hali tahlil qilingan qo'ng'iroq yo'q",
+        "branch_best": "🥇 Eng yaxshi: {name} ({avg}/10)",
+        "branch_worst": "🔻 Eng past: {name} ({avg}/10)",
+        "branch_unassigned": "\n⚠️ Filialsiz operatorlar: {count} (bog'lash: /bind)",
+        "branch_title": "🏢 {name}\n",
+        "branch_no_operators": (
+            "Bu filialda hali bog'langan operatorlar yo'q.\n"
+            "Egasi uchun: /user_add <login> <parol> operator <filial id> <amoCRM id> <F.I.Sh>"
+        ),
+        "branch_pick_operator": "\n👥 Operatorlar (bosing — qo'ng'iroqlar va tahlil):",
+        "branch_not_found": "Filial topilmadi.",
+        "rop_no_branch": "⚠️ Hisobingizga filial biriktirilmagan. Bot egasiga murojaat qiling.",
+        # operator ekrani
+        "my_stats_title": "👤 {name} — mening statistikam\n",
+        "my_no_calls": "Hali tahlil qilingan qo'ng'iroqlar yo'q.",
+        # xatolar
+        "errors_title": "⚠️ Xatoli qo'ng'iroqlar (❌ muvaffaqiyatsiz va ❓ shubhali)",
+        "errors_hint": "Qo'ng'iroqni oching — AI tahlilida xato aynan qayerdaligi ko'rsatilgan.",
+        "errors_empty": "✅ Xatoli qo'ng'iroqlar topilmadi.",
+        # rollar bo'yicha kunlik hisobot
+        "daily_scope_all": "📈 Kunlik hisobot — butun bo'lim",
+        "daily_scope_branch": "📈 Kunlik hisobot — «{branch}» filiali",
+        "daily_scope_own": "📈 Kunlik hisobot — {name}",
+        "daily_empty_scoped": "Bugun sizda tahlil qilingan qo'ng'iroqlar yo'q.",
+        # --- egasi buyruqlari (rollarni sozlash) ---
+        "admin_only": "🚫 Buyruq faqat bot egasi uchun.",
+        "admin_usage_branch_add": "Foydalanish: /branch_add <filial nomi>",
+        "admin_branch_added": "✅ «{name}» filiali qo'shildi (id={id}).",
+        "admin_branches": "🏢 Filiallar (id — nomi — operatorlar soni):",
+        "admin_branches_empty": "Filiallar yo'q. Yaratish: /branch_add <nomi>",
+        "admin_usage_user_add": (
+            "Foydalanish:\n"
+            "/user_add <login> <parol> <rol> <filial id|-> <amo_id|-> <F.I.Sh>\n\n"
+            "Rollar: operator, rop, director, owner\n"
+            "Misollar:\n"
+            "/user_add boss 1234 director - - Topex direktori\n"
+            "/user_add rop1 1234 rop 1 - Yunusobod ROP\n"
+            "/user_add durdona 1234 operator 1 6284739 Durdona"
+        ),
+        "admin_user_added": "✅ {login} — {role} {extra} qo'shildi.",
+        "admin_user_exists": "⚠️ {login} logini band.",
+        "admin_users": "👤 Foydalanuvchilar (login — rol — filial — amo_id):",
+        "admin_users_empty": "Foydalanuvchilar yo'q. Qo'shish: /user_add",
+        "admin_user_not_found": "⚠️ «{login}» foydalanuvchisi topilmadi.",
+        "admin_bad_role": "⚠️ Rol quyidagilardan biri bo'lishi kerak: operator, rop, director, owner.",
+        "admin_bad_branch": "⚠️ id={id} bo'lgan filial topilmadi. Ro'yxat: /branches",
+        "admin_usage_bind": "Foydalanish: /bind <login> <amoCRM operator id>",
+        "admin_bound": "✅ {login} amoCRM operatori id={amo_id} ga bog'landi.",
+        "admin_usage_passwd": "Foydalanish: /passwd <login> <yangi parol>",
+        "admin_passwd_ok": "✅ {login} uchun parol yangilandi.",
+        "admin_usage_access": "Foydalanish: /user_off <login> yoki /user_on <login>",
+        "admin_access_on": "✅ {login}: ruxsat yoqildi.",
+        "admin_access_off": "⛔ {login}: ruxsat o'chirildi.",
+        "admin_amo_ids": "🆔 amoCRM xodimlari (id — ism — tahlil qilingan qo'ng'iroqlar):",
+        "admin_amo_ids_empty": "amoCRM xodimlari olinmadi (CRM ulanmaganmi?).",
+        "admin_inactive_mark": " (o'chirilgan)",
     },
     "en": {
         # --- menu and buttons ---
@@ -537,6 +741,107 @@ TEXTS = {
         "role_rop": "Sales manager (ROP)",
         "role_director": "Director",
         "role_owner": "Owner",
+        "auth_already_logged": "You are already logged in as {name} ({role}). To switch: /logout",
+        "auth_operator_unbound": (
+            "⚠️ Your account is not linked to an amoCRM operator yet — no calls to show.\n"
+            "Ask your manager to run: /bind <your login> <amoCRM id>"
+        ),
+        "auth_login_hint": "🔒 Log in: /login — or /login <login> <password> in one line.",
+        # --- role screens (director / ROP / operator) ---
+        "menu_role_line": "👤 {name} • {role}{branch}",
+        "menu_branch_suffix": " • branch: {branch}",
+        "menu_text_rop": (
+            "📋 ROP menu\n\n"
+            "👥 My operators — branch operator ranking, their calls and AI review.\n"
+            "📊 Branch stats — totals for your branch.\n"
+            "⚠️ Branch mistakes — calls where operators made mistakes.\n"
+            "📈 Daily report — for your branch."
+        ),
+        "menu_text_operator": (
+            "📋 My menu\n\n"
+            "📞 My calls — your conversations with score and AI review.\n"
+            "📊 My stats — successful / unsuccessful / no-answer and average score.\n"
+            "⚠️ My mistakes — calls where AI found mistakes: what exactly and how to fix.\n"
+            "📈 My daily report — your day summary."
+        ),
+        "btn_branches": "🏢 Branch summary",
+        "btn_branch_stats": "📊 Branch stats",
+        "btn_branch_team": "👥 My operators",
+        "btn_dept_total": "📊 Department total",
+        "btn_my_calls": "📞 My calls",
+        "btn_my_stats": "📊 My stats",
+        "btn_my_errors": "⚠️ My mistakes",
+        "btn_errors": "⚠️ Mistakes",
+        "btn_branch_errors": "⚠️ Branch mistakes",
+        "btn_to_branches": "⬅️ To branches",
+        # director summary
+        "branches_title": "🏢 Branch summary\n",
+        "branches_empty": (
+            "No branches yet.\n\n"
+            "Owner: /branch_add <name> — create a branch, "
+            "/user_add — create a user, /bind — link an operator to amoCRM."
+        ),
+        "branch_line": (
+            "🏢 {name} — {operators} op., {total} calls (☎️{answered} / 📵{noanswer})\n"
+            "   ✅{ok}% ❌{fail}% ❓{doubt}%{avg}"
+        ),
+        "branch_avg_suffix": " • avg score {avg}/10",
+        "branch_no_calls": "   no analysed calls yet",
+        "branch_best": "🥇 Best: {name} ({avg}/10)",
+        "branch_worst": "🔻 Weakest: {name} ({avg}/10)",
+        "branch_unassigned": "\n⚠️ Operators without a branch: {count} (link with /bind)",
+        "branch_title": "🏢 {name}\n",
+        "branch_no_operators": (
+            "No operators linked to this branch yet.\n"
+            "Owner: /user_add <login> <password> operator <branch id> <amoCRM id> <full name>"
+        ),
+        "branch_pick_operator": "\n👥 Operators (tap — calls and review):",
+        "branch_not_found": "Branch not found.",
+        "rop_no_branch": "⚠️ No branch is linked to your account. Contact the bot owner.",
+        # operator screen
+        "my_stats_title": "👤 {name} — my stats\n",
+        "my_no_calls": "No analysed calls yet.",
+        # mistakes
+        "errors_title": "⚠️ Calls with mistakes (❌ unsuccessful and ❓ questionable)",
+        "errors_hint": "Open a call — the AI review shows exactly where the mistake is.",
+        "errors_empty": "✅ No calls with mistakes found.",
+        # role-aware daily report
+        "daily_scope_all": "📈 Daily report — whole department",
+        "daily_scope_branch": "📈 Daily report — branch «{branch}»",
+        "daily_scope_own": "📈 Daily report — {name}",
+        "daily_empty_scoped": "You have no analysed calls today yet.",
+        # --- owner commands (role setup) ---
+        "admin_only": "🚫 This command is for the bot owner only.",
+        "admin_usage_branch_add": "Usage: /branch_add <branch name>",
+        "admin_branch_added": "✅ Branch «{name}» created (id={id}).",
+        "admin_branches": "🏢 Branches (id — name — operators):",
+        "admin_branches_empty": "No branches yet. Create one: /branch_add <name>",
+        "admin_usage_user_add": (
+            "Usage:\n"
+            "/user_add <login> <password> <role> <branch id|-> <amo_id|-> <full name>\n\n"
+            "Roles: operator, rop, director, owner\n"
+            "Examples:\n"
+            "/user_add boss 1234 director - - Topex Director\n"
+            "/user_add rop1 1234 rop 1 - Yunusabad ROP\n"
+            "/user_add durdona 1234 operator 1 6284739 Durdona"
+        ),
+        "admin_user_added": "✅ {login} — {role} {extra} created.",
+        "admin_user_exists": "⚠️ Login {login} is already taken.",
+        "admin_users": "👤 Users (login — role — branch — amo_id):",
+        "admin_users_empty": "No users yet. Create one: /user_add",
+        "admin_user_not_found": "⚠️ User «{login}» not found.",
+        "admin_bad_role": "⚠️ Role must be one of: operator, rop, director, owner.",
+        "admin_bad_branch": "⚠️ Branch id={id} not found. List: /branches",
+        "admin_usage_bind": "Usage: /bind <login> <amoCRM operator id>",
+        "admin_bound": "✅ {login} linked to amoCRM operator id={amo_id}.",
+        "admin_usage_passwd": "Usage: /passwd <login> <new password>",
+        "admin_passwd_ok": "✅ Password for {login} updated.",
+        "admin_usage_access": "Usage: /user_off <login> or /user_on <login>",
+        "admin_access_on": "✅ {login}: access enabled.",
+        "admin_access_off": "⛔ {login}: access disabled.",
+        "admin_amo_ids": "🆔 amoCRM users (id — name — analysed calls):",
+        "admin_amo_ids_empty": "Could not fetch amoCRM users (CRM not connected?).",
+        "admin_inactive_mark": " (disabled)",
     },
 }
 
