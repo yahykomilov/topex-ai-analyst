@@ -689,6 +689,10 @@ async def cb_manager_day(cb: CallbackQuery) -> None:
 async def cb_analyze(cb: CallbackQuery) -> None:
     _, note_id_s, manager_id = cb.data.split(":")
     note_id = int(note_id_s)
+    vu = current_view_user(cb.message.chat.id)
+    if vu is None or not auth.can_see_manager(vu, manager_id):
+        await cb.answer(t("access_denied"), show_alert=True)
+        return
     await cb.answer(t("analyzing"))
 
     existing = db.find_by_note(note_id)
@@ -835,6 +839,13 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
 @dp.callback_query(F.data.startswith("call:"))
 async def cb_call(cb: CallbackQuery) -> None:
     call_id = int(cb.data.split(":")[1])
+    c = db.get_call(call_id)
+    if not c:
+        await cb.answer(t("call_not_found"))
+        return
+    if not can_view_call(cb.message.chat.id, c):
+        await cb.answer(t("access_denied"), show_alert=True)
+        return
     await cb.answer()
     await send_call_package(cb.message.chat.id, call_id)
 
@@ -933,13 +944,16 @@ async def cb_stats(cb: CallbackQuery) -> None:
 DAILY_REPORT_HOUR = 20  # автоотчёт каждый день в 20:00
 
 
-async def build_daily_report() -> str | None:
+async def build_daily_report(vu=None) -> str | None:
     now = datetime.now()
     day_start = int(datetime(now.year, now.month, now.day).timestamp())
+    vis = auth.visible_manager_ids(vu) if vu is not None else None
+    allow = {str(x) for x in vis} if vis is not None else None
     calls = [
         c
         for c in db.calls_between(day_start, day_start + 86400)
         if manager_allowed(c["manager_name"])
+        and (allow is None or str(c["manager_id"]) in allow)
     ]
     if not calls:
         return None
@@ -1004,13 +1018,13 @@ async def build_daily_report() -> str | None:
 @dp.callback_query(F.data == "daily")
 async def cb_daily(cb: CallbackQuery) -> None:
     vu = current_view_user(cb.message.chat.id)
-    if vu is None or vu["role"] not in (auth.OWNER, auth.DIRECTOR):
-        await cb.answer(t("daily_denied"), show_alert=True)
+    if vu is None:
+        await cb.answer(t("need_login"), show_alert=True)
         return
     await cb.answer(t("daily_preparing"))
     msg = await bot.send_message(cb.message.chat.id, t("daily_building"))
     try:
-        report = await build_daily_report()
+        report = await build_daily_report(vu)
         if report is None:
             await msg.edit_text(t("daily_empty"))
             return
@@ -1024,20 +1038,35 @@ async def cb_daily(cb: CallbackQuery) -> None:
 
 
 async def daily_report_loop() -> None:
+    """Раз в день в DAILY_REPORT_HOUR: владельцу — общий отчёт, каждому вошедшему
+    РОП/директору/оператору (у кого есть tg_id) — свой, в рамках видимости роли."""
     while True:
         await asyncio.sleep(300)
         try:
-            owner = state.get_owner()
-            if owner is None:
-                continue
             now = datetime.now()
             today = now.strftime("%Y-%m-%d")
-            if now.hour >= DAILY_REPORT_HOUR and state.get_last_daily() != today:
+            if now.hour < DAILY_REPORT_HOUR or state.get_last_daily() == today:
+                continue
+            state.set_last_daily(today)
+
+            owner = state.get_owner()
+            if owner is not None:
                 report = await build_daily_report()
-                state.set_last_daily(today)
                 if report:
                     await bot.send_message(owner, t("daily_auto"))
                     await send_long(owner, report)
+
+            for u in auth.list_users():
+                tg_id = u["tg_id"]
+                if not tg_id or is_owner_chat(tg_id):
+                    continue  # без сессии или уже получил общий отчёт как владелец
+                try:
+                    report = await build_daily_report(u)
+                    if report:
+                        await bot.send_message(tg_id, t("daily_auto"))
+                        await send_long(tg_id, report)
+                except Exception as e:
+                    log.error("Ошибка автоотчёта для %s: %s", u["login"], e)
         except Exception as e:
             log.error("Ошибка автоотчёта: %s", e)
 
