@@ -566,6 +566,38 @@ TEXTS = {
             6: "no ans.",
             7: "no conn.",
         },
+        # --- auth and roles ---
+        "need_login": "🔐 You need to log in. Send: /login login password\n(your manager gives you the login and password).",
+        "login_usage": "Usage: /login login password",
+        "login_ok": "✅ Logged in. Your role: {role}.",
+        "login_fail": "⛔ Wrong login or password.",
+        "logout_ok": "👋 You're logged out. To log in again: /login login password",
+        "access_denied": "⛔ No access to this data.",
+        "whoami": "You're logged in as {name} • role: {role}.",
+        "whoami_owner": "You're the bot owner (full access).",
+        "whoami_none": "You're not logged in. Send: /login login password",
+        "role_operator": "operator",
+        "role_rop": "ROP (department head)",
+        "role_director": "director",
+        "role_owner": "owner",
+        "owner_only": "⛔ This command is only available to the owner.",
+        "addbranch_usage": "Usage: /addbranch branch name",
+        "branch_added": "✅ Branch added: {name} (id {id}).",
+        "branches_title": "🏢 Branches:",
+        "branches_empty": "No branches yet. Add one: /addbranch name",
+        "adduser_usage": (
+            "Usage: /adduser login password role [branch_id] [operator_amo_id]\n"
+            "roles: operator / rop / director\n"
+            "Operator example: /adduser durdona 1234 operator 1 7621234"
+        ),
+        "adduser_bad_role": "⛔ Role must be one of: operator, rop, director.",
+        "user_added": "✅ User created: {login} • role {role}{extra}.",
+        "user_exists": "⛔ Login «{login}» is already taken.",
+        "users_title": "👤 Users:",
+        "users_empty": "No users yet. Add one: /adduser ...",
+        "daily_denied": "⛔ The daily report is available to directors and the owner.",
+        "stats_by_branch": "\n🏢 By branch:",
+        "stats_branch_line": "• {name}: {total} calls (☎️{answered}/📵{noanswer}), ✅{ok}% ❌{fail}% ❓{doubt}%{avg}",
     },
 }
 
