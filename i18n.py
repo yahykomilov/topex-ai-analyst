@@ -35,8 +35,6 @@ TEXTS = {
         ),
         # --- доступ ---
         "owner_set": "✅ Вы назначены владельцем бота.",
-        "private_bot": "⛔ Бот приватный и уже привязан к другому пользователю.",
-        "private_hint": "⛔ Бот приватный. Отправьте /start, если вы владелец.",
         # --- роли и вход ---
         "auth_greeting": "👋 Здравствуйте! Это бот Topex AI Analyst.",
         "auth_ask_login": "Введите ваш логин:",
@@ -235,8 +233,6 @@ TEXTS = {
         ),
         # --- kirish huquqi ---
         "owner_set": "✅ Siz bot egasi etib tayinlandingiz.",
-        "private_bot": "⛔ Bot shaxsiy va allaqachon boshqa foydalanuvchiga biriktirilgan.",
-        "private_hint": "⛔ Bot shaxsiy. Agar egasi bo'lsangiz, /start yuboring.",
         # --- rollar va kirish ---
         "auth_greeting": "👋 Assalomu aleykum! Bu Topex AI Analyst boti.",
         "auth_ask_login": "Loginingizni kiriting:",
@@ -439,8 +435,6 @@ TEXTS = {
         ),
         # --- access ---
         "owner_set": "✅ You are now the bot owner.",
-        "private_bot": "⛔ This bot is private and already linked to another user.",
-        "private_hint": "⛔ This bot is private. Send /start if you're the owner.",
         # --- language ---
         "lang_prompt": "🌐 Choose the interface language:",
         "lang_changed": "✅ Interface language: English",

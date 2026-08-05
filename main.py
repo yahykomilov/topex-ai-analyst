@@ -1104,7 +1104,10 @@ async def daily_report_loop() -> None:
 @dp.message(F.voice | F.audio | F.document)
 async def handle_file(message: Message) -> None:
     if not is_owner_chat(message.chat.id):
-        await message.answer(t("private_hint"))
+        if current_view_user(message.chat.id) is None:
+            await begin_login_flow(message.chat.id)
+        else:
+            await message.answer(t("owner_only"))
         return
 
     doc = message.document
@@ -1197,7 +1200,7 @@ async def handle_text(message: Message) -> None:
 
     # ручной аудит текста — только владелец
     if not is_owner_chat(message.chat.id):
-        await message.answer(t("private_hint"))
+        await message.answer(t("owner_only"))
         return
 
     if len(text) < 100:
