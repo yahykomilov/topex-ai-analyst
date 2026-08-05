@@ -168,6 +168,19 @@ TEXTS = {
             6: "недозв.",
             7: "нет соед.",
         },
+        # --- авторизация и роли (черновик текстов, ждёт вшивания auth.py в main.py) ---
+        "auth_login_prompt": "🔑 Введите логин:",
+        "auth_password_prompt": "🔒 Введите пароль (сообщение будет удалено после проверки):",
+        "auth_failed": "❌ Неверный логин или пароль.",
+        "auth_inactive": "⛔ Ваш аккаунт отключён. Обратитесь к руководителю.",
+        "auth_success": "✅ Добро пожаловать, {name}! Роль: {role}",
+        "auth_logged_out": "👋 Вы вышли из аккаунта.",
+        "auth_not_logged_in": "🔒 Сначала войдите: /login",
+        "auth_no_access": "🚫 У вас нет доступа к этому разделу.",
+        "role_operator": "Оператор",
+        "role_rop": "РОП",
+        "role_director": "Директор",
+        "role_owner": "Владелец",
     },
     "uz": {
         # --- menyu va tugmalar ---
@@ -336,6 +349,19 @@ TEXTS = {
             6: "javobs.",
             7: "aloqa yo'q",
         },
+        # --- avtorizatsiya va rollar (qoralama matn, auth.py main.py'ga ulanishini kutmoqda) ---
+        "auth_login_prompt": "🔑 Login yuboring:",
+        "auth_password_prompt": "🔒 Parolni yuboring (tekshiruvdan keyin xabar o'chiriladi):",
+        "auth_failed": "❌ Login yoki parol xato.",
+        "auth_inactive": "⛔ Hisobingiz faol emas. Rahbaringizga murojaat qiling.",
+        "auth_success": "✅ Xush kelibsiz, {name}! Rol: {role}",
+        "auth_logged_out": "👋 Hisobdan chiqdingiz.",
+        "auth_not_logged_in": "🔒 Avval kiring: /login",
+        "auth_no_access": "🚫 Sizda bu bo'limga ruxsat yo'q.",
+        "role_operator": "Operator",
+        "role_rop": "ROP",
+        "role_director": "Direktor",
+        "role_owner": "Egasi",
     },
     "en": {
         # --- menu and buttons ---
@@ -498,6 +524,19 @@ TEXTS = {
             6: "no ans.",
             7: "no conn.",
         },
+        # --- auth and roles (draft text, awaiting auth.py wiring into main.py) ---
+        "auth_login_prompt": "🔑 Enter your login:",
+        "auth_password_prompt": "🔒 Enter your password (message will be deleted after checking):",
+        "auth_failed": "❌ Wrong login or password.",
+        "auth_inactive": "⛔ Your account is disabled. Contact your manager.",
+        "auth_success": "✅ Welcome, {name}! Role: {role}",
+        "auth_logged_out": "👋 You have been logged out.",
+        "auth_not_logged_in": "🔒 Please log in first: /login",
+        "auth_no_access": "🚫 You don't have access to this section.",
+        "role_operator": "Operator",
+        "role_rop": "Sales manager (ROP)",
+        "role_director": "Director",
+        "role_owner": "Owner",
     },
 }
 
