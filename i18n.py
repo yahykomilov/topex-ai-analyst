@@ -124,6 +124,7 @@ TEXTS = {
         # --- разбор звонка ---
         "analyzing": "Разбираю звонок...",
         "analyzing_long": "🎧 Скачиваю запись, расшифровываю и готовлю PDF (1-2 минуты)...",
+        "report_title": "🧠 Разбор звонка (диалог, ошибки и оценка AI):",
         "call_not_in_crm": (
             "❌ Звонок не найден в CRM (возможно, устарел). "
             "Откройте карточку сотрудника заново."
@@ -323,6 +324,7 @@ TEXTS = {
             "🎧 Yozuvni yuklab olyapman, transkript qilyapman va PDF tayyorlayapman "
             "(1-2 daqiqa)..."
         ),
+        "report_title": "🧠 Qo'ng'iroq tahlili (dialog, xatolar va AI bahosi):",
         "call_not_in_crm": (
             "❌ Qo'ng'iroq CRM'da topilmadi (eskirgan bo'lishi mumkin). "
             "Xodim kartasini qaytadan oching."

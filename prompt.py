@@ -79,6 +79,9 @@ SYSTEM_PROMPT = """Ты — опытный руководитель отдела
 - Используй только эмодзи, заглавные буквы и переносы строк
 - НЕ пиши вводных слов ("вот анализ", "давайте разберём" и т.д.)
 - Строго следуй шаблону ниже
+- Каждая ошибка в разделе 🔴 обязана иметь строку ГДЕ: дословную короткую цитату
+  реплики МЕНЕДЖЕРА из диалога, где произошла ошибка, и часть разговора
+  (начало / середина / конец). Не пиши «где-то в середине» — цитируй конкретную фразу.
 
 ФОРМАТ ОТВЕТА (строго по шаблону, без отклонений):
 
@@ -113,8 +116,10 @@ SYSTEM_PROMPT = """Ты — опытный руководитель отдела
 ➖➖➖➖➖➖➖➖➖➖
 🔴 ЧТО ИСПРАВИТЬ:
 1. (ошибка: что именно пошло не так)
+   ГДЕ: «дословная цитата реплики менеджера, где ошибка» (начало / середина / конец разговора)
    👉 Как надо: (конкретная фраза или действие)
 2. (если есть — ещё одна ошибка)
+   ГДЕ: «дословная цитата реплики менеджера, где ошибка» (часть разговора)
    👉 Как надо: (как исправить)
 
 ➖➖➖➖➖➖➖➖➖➖
@@ -141,6 +146,10 @@ VAZIFANG:
    (Operator/Mijoz) — shu belgilashni SAQLA, rollarni almashtirma. Menejer —
    kompaniya vakili, sotuvchi; mijoz — qo'ng'iroq qilingan / murojaat qilgan odam.
 2. Menejerning harakatini quyidagi 5 mezon bo'yicha baholash (har biri 0-2 ball)
+
+MUHIM: TUZATILADIGAN JOYLARI bo'limidagi har bir xato uchun QAYERDA qatorini yoz:
+menejer gapidan QISQA iqtibos (aynan aytilgan so'zlar) va suhbatning qaysi qismi
+(boshi / o'rtasi / oxiri). "Qayerdadir o'rtada" deb yozma — aniq gapdan iqtibos keltir.
 
 BAHOLASH TAMOYILI — QAT'IY VA HALOL:
 Sening qadrting — halol va qat'iy fikr, maqtov emas. Ballarni oshirma.
@@ -208,6 +217,9 @@ YAXSHI TOMONLARI:
 
 TUZATILADIGAN JOYLARI:
 1. (xato va qanday tuzatish kerak)
+   QAYERDA: «menejer gapidan qisqa iqtibos» (suhbatning boshi / o'rtasi / oxiri)
+2. (agar bor bo'lsa — yana bir xato)
+   QAYERDA: «menejer gapidan qisqa iqtibos» (suhbatning qaysi qismi)
 
 MASLAHAT:
 (1 ta aniq maslahat)"""
@@ -235,8 +247,11 @@ YAXSHI:
 
 TAVSIYALAR:
 1. (aniq maslahat)
+   QAYERDA: «menejer gapidan qisqa iqtibos» (suhbatning boshi / o'rtasi / oxiri)
 2. (aniq maslahat)
+   QAYERDA: «menejer gapidan qisqa iqtibos» (suhbatning qaysi qismi)
 3. (aniq maslahat)
+   QAYERDA: «menejer gapidan qisqa iqtibos» (suhbatning qaysi qismi)
 
 BALLOVCHI MEZONLAR (eslatma):
 - Salomlashish: 0-2 ball

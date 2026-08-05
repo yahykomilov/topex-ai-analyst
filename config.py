@@ -29,12 +29,24 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 ANALYSIS_MODEL = os.getenv("ANALYSIS_MODEL", "gpt-4o-mini").strip()
 
+# OpenAI — платная расшифровка (основной провайдер, если ключ задан).
+# Варианты: gpt-4o-mini-transcribe ($0.003/мин, дёшево) / gpt-4o-transcribe ($0.006/мин, качество)
+OPENAI_TRANSCRIBE_MODEL = os.getenv(
+    "OPENAI_TRANSCRIBE_MODEL", "gpt-4o-mini-transcribe"
+).strip()
+
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-5").strip()
 
 # Groq — бесплатный тариф для тестирования (расшифровка + анализ)
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-GROQ_API_KEY_2 = os.getenv("GROQ_API_KEY_2", "").strip()    # запасной Groq аккаунт
+GROQ_API_KEYS = [
+    k for k in [
+        os.getenv("GROQ_API_KEY", "").strip(),
+        os.getenv("GROQ_API_KEY_2", "").strip(),
+        os.getenv("GROQ_API_KEY_3", "").strip(),
+    ] if k
+]
+GROQ_API_KEY = GROQ_API_KEYS[0] if GROQ_API_KEYS else ""
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
 GROQ_WHISPER_MODEL = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo").strip()
 GROQ_ANALYSIS_MODEL = os.getenv("GROQ_ANALYSIS_MODEL", "llama-3.3-70b-versatile").strip()

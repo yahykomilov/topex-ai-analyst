@@ -49,7 +49,7 @@ def preprocess(input_path: Path, output_path: Path | None = None) -> Path:
     ]
 
     try:
-        log.info("Предобработка: %s → %s", input_path.name, output_path.name)
+        log.info("Предобработка: %s -> %s", input_path.name, output_path.name)
         subprocess.run(cmd, check=True, capture_output=True, timeout=120)
         size_kb = output_path.stat().st_size // 1024
         log.info("Готово: %s (%d КБ)", output_path.name, size_kb)
