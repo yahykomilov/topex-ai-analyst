@@ -813,13 +813,7 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
     # 3. PDF со всем разбором
     await send_call_pdf(chat_id, c, uz)
 
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text=t("btn_dialog"), callback_data=f"txt:{c['id']}"),
-            InlineKeyboardButton(text=t("btn_report"), callback_data=f"rep:{c['id']}"),
-        ],
-        [InlineKeyboardButton(text=t("btn_to_calls"), callback_data=f"mgr:{c['manager_id']}:0")],
-    ])
+    kb = back_kb(f"mgr:{c['manager_id']}:0", t("btn_to_calls"))
     if uz:
         await send_long(chat_id, uz, reply_markup=kb)
     else:

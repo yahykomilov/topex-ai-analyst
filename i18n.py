@@ -24,8 +24,6 @@ TEXTS = {
         "btn_other_date": "📅 Другая дата",
         "btn_search": "🔍 Поиск по имени",
         "btn_audio_tz": "📋 Аудио + ТЗ (узбекча)",
-        "btn_dialog": "💬 Диалог",
-        "btn_report": "📄 Полный разбор",
         "menu_text": (
             "📋 Главное меню\n\n"
             "👥 Сотрудники — выберите менеджера, посмотрите его звонки, разбор AI и статистику.\n"
@@ -221,8 +219,6 @@ TEXTS = {
         "btn_other_date": "📅 Boshqa sana",
         "btn_search": "🔍 Ism bo'yicha qidirish",
         "btn_audio_tz": "📋 Audio + TZ (o'zbekcha)",
-        "btn_dialog": "💬 Dialog",
-        "btn_report": "📄 To'liq tahlil",
         "menu_text": (
             "📋 Asosiy menyu\n\n"
             "👥 Xodimlar — menejerni tanlang, uning qo'ng'iroqlari, AI tahlili va "
