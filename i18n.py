@@ -90,6 +90,7 @@ TEXTS = {
         # --- разбор звонка ---
         "analyzing": "Разбираю звонок...",
         "analyzing_long": "🎧 Скачиваю запись, расшифровываю и готовлю PDF (1-2 минуты)...",
+        "report_title": "🧠 Разбор звонка (диалог, ошибки и оценка AI):",
         "call_not_in_crm": (
             "❌ Звонок не найден в CRM (возможно, устарел). "
             "Откройте карточку сотрудника заново."
@@ -115,11 +116,13 @@ TEXTS = {
         "stats_title": "📊 Общая статистика отдела\n",
         "stats_by_manager": "\n👥 По сотрудникам:",
         "stats_total": "📞 Всего звонков: {total}",
-        "stats_ok": "✅ Успешные: {count} ({percent}%)",
-        "stats_fail": "❌ Неуспешные: {count} ({percent}%)",
-        "stats_doubt": "❓ Под вопросом: {count} ({percent}%)",
+        "stats_answered": "☎️ Отвечено (был разговор): {answered}",
+        "stats_ok": "✅ Успешные: {count} ({percent}% отвеченных)",
+        "stats_fail": "❌ Неуспешные: {count} ({percent}% отвеченных)",
+        "stats_doubt": "❓ Под вопросом: {count} ({percent}% отвеченных)",
+        "stats_noanswer": "📵 Недозвон / не взяли трубку: {count}",
         "stats_avg": "⭐ Средний балл: {avg}/10",
-        "stats_manager_line": "• {name}: {total} зв., ✅{ok}% ❌{fail}% ❓{doubt}%{avg}",
+        "stats_manager_line": "• {name}: {total} зв. (☎️{answered}/📵{noanswer}), ✅{ok}% ❌{fail}% ❓{doubt}%{avg}",
         "stats_manager_avg": ", ср. балл {avg}/10",
         # --- отчёт за день ---
         "daily_preparing": "Готовлю отчёт...",
@@ -253,6 +256,7 @@ TEXTS = {
             "🎧 Yozuvni yuklab olyapman, transkript qilyapman va PDF tayyorlayapman "
             "(1-2 daqiqa)..."
         ),
+        "report_title": "🧠 Qo'ng'iroq tahlili (dialog, xatolar va AI bahosi):",
         "call_not_in_crm": (
             "❌ Qo'ng'iroq CRM'da topilmadi (eskirgan bo'lishi mumkin). "
             "Xodim kartasini qaytadan oching."
@@ -280,11 +284,13 @@ TEXTS = {
         "stats_title": "📊 Bo'lim umumiy statistikasi\n",
         "stats_by_manager": "\n👥 Xodimlar bo'yicha:",
         "stats_total": "📞 Jami qo'ng'iroqlar: {total}",
-        "stats_ok": "✅ Muvaffaqiyatli: {count} ({percent}%)",
-        "stats_fail": "❌ Muvaffaqiyatsiz: {count} ({percent}%)",
-        "stats_doubt": "❓ Shubhali: {count} ({percent}%)",
+        "stats_answered": "☎️ Javob berilgan (suhbat bo'lgan): {answered}",
+        "stats_ok": "✅ Muvaffaqiyatli: {count} ({percent}% javob berilgandan)",
+        "stats_fail": "❌ Muvaffaqiyatsiz: {count} ({percent}% javob berilgandan)",
+        "stats_doubt": "❓ Shubhali: {count} ({percent}% javob berilgandan)",
+        "stats_noanswer": "📵 Ko'tarilmagan qo'ng'iroq: {count}",
         "stats_avg": "⭐ O'rtacha ball: {avg}/10",
-        "stats_manager_line": "• {name}: {total} qo'ng'., ✅{ok}% ❌{fail}% ❓{doubt}%{avg}",
+        "stats_manager_line": "• {name}: {total} qo'ng'. (☎️{answered}/📵{noanswer}), ✅{ok}% ❌{fail}% ❓{doubt}%{avg}",
         "stats_manager_avg": ", o'rt. ball {avg}/10",
         # --- kunlik hisobot ---
         "daily_preparing": "Hisobot tayyorlanyapti...",
@@ -534,11 +540,14 @@ def direction(value: str) -> str:
 
 def format_stats(stats: dict) -> str:
     c, p = stats["counts"], stats["percent"]
+    answered = stats.get("answered", c["ok"] + c["fail"] + c["doubt"])
     lines = [
         t("stats_total", total=stats["total"]),
+        t("stats_answered", answered=answered),
         t("stats_ok", count=c["ok"], percent=p["ok"]),
         t("stats_fail", count=c["fail"], percent=p["fail"]),
         t("stats_doubt", count=c["doubt"], percent=p["doubt"]),
+        t("stats_noanswer", count=c.get("noanswer", 0)),
     ]
     if stats["avg_score"] is not None:
         lines.append(t("stats_avg", avg=stats["avg_score"]))

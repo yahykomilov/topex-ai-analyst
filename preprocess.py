@@ -49,13 +49,22 @@ def preprocess(input_path: Path, output_path: Path | None = None) -> Path:
     ]
 
     try:
-        log.info("Предобработка: %s → %s", input_path.name, output_path.name)
+        log.info("Предобработка: %s -> %s", input_path.name, output_path.name)
         subprocess.run(cmd, check=True, capture_output=True, timeout=120)
         size_kb = output_path.stat().st_size // 1024
         log.info("Готово: %s (%d КБ)", output_path.name, size_kb)
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            FileNotFoundError, OSError) as e:
+        # ffmpeg может отсутствовать на сервере (FileNotFoundError), зависнуть
+        # (TimeoutExpired) или упасть — в любом случае не валим весь разбор звонка,
+        # а отдаём оригинал аудио дальше в распознавание.
+        detail = (
+            e.stderr[:200].decode(errors="replace")
+            if isinstance(e, subprocess.CalledProcessError) and e.stderr
+            else str(e)
+        )
         log.warning("Предобработка не удалась (%s), использую оригинал: %s",
-                     e.stderr[:200].decode(errors="replace") if e.stderr else "?", input_path.name)
+                     detail, input_path.name)
         return input_path
 
     return output_path

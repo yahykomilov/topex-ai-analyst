@@ -30,6 +30,7 @@ from analyzer import (
 )
 from config import (
     AUDIO_DIR,
+    EXTRA_OWNER_IDS,
     MANAGER_WHITELIST,
     MIN_CALL_DURATION,
     POLL_INTERVAL,
@@ -70,10 +71,18 @@ pending_search: set[int] = set()
 def split_message(text: str) -> list[str]:
     chunks, current = [], ""
     for line in text.split("\n"):
+        # супер-длинная строка без переносов: режем по лимиту, не теряя данные
+        if len(line) > TG_LIMIT:
+            if current:
+                chunks.append(current)
+                current = ""
+            for i in range(0, len(line), TG_LIMIT):
+                chunks.append(line[i:i + TG_LIMIT])
+            continue
         if len(current) + len(line) + 1 > TG_LIMIT:
             if current:
                 chunks.append(current)
-            current = line[:TG_LIMIT]
+            current = line
         else:
             current = f"{current}\n{line}" if current else line
     if current:
@@ -90,7 +99,7 @@ async def send_long(chat_id: int, text: str, reply_markup=None) -> None:
 
 
 def is_owner_chat(chat_id: int) -> bool:
-    return state.get_owner() == chat_id
+    return state.get_owner() == chat_id or chat_id in EXTRA_OWNER_IDS
 
 
 def fmt_dt(ts: int) -> str:
@@ -168,7 +177,7 @@ async def cmd_start(message: Message) -> None:
     if owner is None:
         state.set_owner(message.chat.id)
         await message.answer(t("owner_set"))
-    elif owner != message.chat.id:
+    elif owner != message.chat.id and message.chat.id not in EXTRA_OWNER_IDS:
         await message.answer(t("private_bot"))
         return
     await message.answer(t("menu_text"), reply_markup=main_menu_kb())
@@ -610,7 +619,11 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
     if not audio_sent:
         await bot.send_message(chat_id, caption + "\n" + t("audio_unavailable"))
 
-    # 2. Короткое ТЗ на узбекском (генерируем один раз, потом берём из базы)
+    # 2. Разбор с диалогом — прямо в Telegram (не только в PDF)
+    report_text = c["report"] or t("report_missing")
+    await send_long(chat_id, f"{t('report_title')}\n\n{report_text}")
+
+    # 3. Короткое ТЗ на узбекском (генерируем один раз, потом берём из базы)
     uz = c["uz_doc"]
     if not uz and c["transcript"]:
         try:
@@ -620,7 +633,7 @@ async def send_call_package(chat_id: int, call_id: int) -> None:
             log.exception("Ошибка генерации ТЗ")
             uz = None
 
-    # 3. PDF со всем разбором
+    # 4. PDF со всем разбором
     await send_call_pdf(chat_id, c, uz)
 
     kb = back_kb(f"mgr:{c['manager_id']}:0", t("btn_to_calls"))
@@ -687,6 +700,8 @@ async def cb_stats(cb: CallbackQuery) -> None:
                     "stats_manager_line",
                     name=r["manager_name"],
                     total=s["total"],
+                    answered=s.get("answered", 0),
+                    noanswer=s["counts"].get("noanswer", 0),
                     ok=s["percent"]["ok"],
                     fail=s["percent"]["fail"],
                     doubt=s["percent"]["doubt"],
@@ -716,7 +731,7 @@ async def build_daily_report() -> str | None:
     phones = {c["phone"] for c in calls if c["phone"]}
     no_phone = sum(1 for c in calls if not c["phone"])
     clients = len(phones) + no_phone
-    verdicts = {"ok": 0, "fail": 0, "doubt": 0}
+    verdicts = {"ok": 0, "fail": 0, "doubt": 0, "noanswer": 0}
     scores = []
     per_mgr: dict[str, dict] = {}
     for c in calls:
@@ -724,7 +739,8 @@ async def build_daily_report() -> str | None:
         if c["score"] is not None:
             scores.append(c["score"])
         m = per_mgr.setdefault(
-            c["manager_name"], {"n": 0, "ok": 0, "fail": 0, "doubt": 0, "scores": []}
+            c["manager_name"],
+            {"n": 0, "ok": 0, "fail": 0, "doubt": 0, "noanswer": 0, "scores": []},
         )
         m["n"] += 1
         m[c["verdict"]] += 1
@@ -736,7 +752,9 @@ async def build_daily_report() -> str | None:
         f"Дата: {now.strftime('%d.%m.%Y')}",
         f"Клиентов обслужено (уникальных): {clients}",
         f"Звонков разобрано: {len(calls)}",
-        f"Успешных: {verdicts['ok']}, неуспешных: {verdicts['fail']}, под вопросом: {verdicts['doubt']}",
+        f"Отвечено (был разговор): {verdicts['ok'] + verdicts['fail'] + verdicts['doubt']} — "
+        f"✅ успешных {verdicts['ok']}, ❌ неуспешных {verdicts['fail']}, ❓ под вопросом {verdicts['doubt']}",
+        f"📵 Недозвон / не взяли трубку: {verdicts['noanswer']}",
         f"Средний балл отдела: {avg}/10",
         "",
         "По сотрудникам:",
@@ -745,17 +763,24 @@ async def build_daily_report() -> str | None:
         m_avg = round(sum(m["scores"]) / len(m["scores"]), 1) if m["scores"] else "—"
         facts.append(
             f"- {name}: {m['n']} зв., ср. балл {m_avg}/10, "
-            f"успешных {m['ok']}, неуспешных {m['fail']}, под вопросом {m['doubt']}"
+            f"✅{m['ok']} ❌{m['fail']} ❓{m['doubt']} 📵{m['noanswer']}"
         )
 
     summaries = []
+    total_len = 0
+    MAX_SUMMARY_CHARS = 8000
     for c in calls[:25]:
-        summaries.append(
+        s = (
             f"— {c['manager_name']} • {fmt_dt(c['created_at'])} • {c['phone'] or 'без номера'}:\n"
             f"{report_excerpt(c['report'] or '')}"
         )
-    if len(calls) > 25:
-        summaries.append(f"(и ещё {len(calls) - 25} звонков — в выжимку не вошли)")
+        if total_len + len(s) > MAX_SUMMARY_CHARS:
+            break
+        summaries.append(s)
+        total_len += len(s)
+    shown = len(summaries)
+    if len(calls) > shown:
+        summaries.append(f"(и ещё {len(calls) - shown} звонков — в выжимку не вошли)")
 
     return await team_report("\n".join(facts), "\n\n".join(summaries))
 
@@ -950,8 +975,8 @@ async def process_amo_call(call: dict) -> int | None:
             created_at=call["created_at"] or int(time.time()),
             transcript="",
             report="",
-            score=0,
-            verdict="fail",
+            score=None,  # недозвон/пропущенный — разговора не было, не тянем средний балл вниз
+            verdict="noanswer",  # отдельная категория: клиент не взял трубку (НЕ «неуспешный» разговор)
             call_status=call_status,
             card_url=card_url,
             rec_link="",

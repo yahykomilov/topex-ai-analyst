@@ -44,7 +44,7 @@ for _col, _typ in (
         pass
 _conn.commit()
 
-VERDICT_EMOJI = {"ok": "✅", "fail": "❌", "doubt": "❓"}
+VERDICT_EMOJI = {"ok": "✅", "fail": "❌", "doubt": "❓", "noanswer": "📵"}
 
 # Подписи вердиктов и статусов звонка (amoCRM call_status: 4=разговор,
 # 5=пропущенный, 6=недозвон, 7=нет соединения) переводятся — они в i18n.py
@@ -161,10 +161,12 @@ def stats_for(manager_id: str | None = None) -> dict:
     rows = _conn.execute(
         f"SELECT verdict, COUNT(*) AS cnt FROM calls {where} GROUP BY verdict", params
     ).fetchall()
-    counts = {"ok": 0, "fail": 0, "doubt": 0}
+    counts = {"ok": 0, "fail": 0, "doubt": 0, "noanswer": 0}
     for r in rows:
-        counts[r["verdict"]] = r["cnt"]
-    total = sum(counts.values())
+        if r["verdict"] in counts:
+            counts[r["verdict"]] = r["cnt"]
+    answered = counts["ok"] + counts["fail"] + counts["doubt"]
+    total = answered + counts["noanswer"]
     avg = _conn.execute(
         f"SELECT AVG(score) FROM calls {where}"
         + (" AND" if where else " WHERE")
@@ -173,9 +175,13 @@ def stats_for(manager_id: str | None = None) -> dict:
     ).fetchone()[0]
     return {
         "total": total,
+        "answered": answered,
         "counts": counts,
+        # проценты успех/неуспех/сомнение считаем от ОТВЕЧЕННЫХ звонков,
+        # недозвон в знаменатель не берём — иначе всё выглядит «неуспешным»
         "percent": {
-            k: (round(v * 100 / total) if total else 0) for k, v in counts.items()
+            k: (round(counts[k] * 100 / answered) if answered else 0)
+            for k in ("ok", "fail", "doubt")
         },
         "avg_score": round(avg, 1) if avg is not None else None,
     }
