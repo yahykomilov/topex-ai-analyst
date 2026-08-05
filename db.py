@@ -156,10 +156,26 @@ def calls_between(start_ts: int, end_ts: int) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def stats_for(manager_id: str | None = None) -> dict:
-    where, params = ("WHERE manager_id = ?", (manager_id,)) if manager_id else ("", ())
+def _scope(manager_ids: list | None) -> tuple[str, list]:
+    """Ограничение выборки по операторам (роли).
+
+    None — без ограничения (директор/владелец видит всех).
+    []   — не видно никого (нет сессии / оператор без привязки к amoCRM).
+    """
+    if manager_ids is None:
+        return "", []
+    ids = [str(m) for m in manager_ids if m is not None]
+    if not ids:
+        return " AND 1 = 0", []
+    return f" AND manager_id IN ({','.join('?' * len(ids))})", ids
+
+
+def stats_for_ids(manager_ids: list | None = None) -> dict:
+    """Статистика по набору операторов (для экранов филиала/РОПа/оператора)."""
+    clause, params = _scope(manager_ids)
     rows = _conn.execute(
-        f"SELECT verdict, COUNT(*) AS cnt FROM calls {where} GROUP BY verdict", params
+        f"SELECT verdict, COUNT(*) AS cnt FROM calls WHERE 1 = 1{clause} GROUP BY verdict",
+        params,
     ).fetchall()
     counts = {"ok": 0, "fail": 0, "doubt": 0, "noanswer": 0}
     for r in rows:
@@ -168,10 +184,7 @@ def stats_for(manager_id: str | None = None) -> dict:
     answered = counts["ok"] + counts["fail"] + counts["doubt"]
     total = answered + counts["noanswer"]
     avg = _conn.execute(
-        f"SELECT AVG(score) FROM calls {where}"
-        + (" AND" if where else " WHERE")
-        + " score IS NOT NULL",
-        params,
+        f"SELECT AVG(score) FROM calls WHERE score IS NOT NULL{clause}", params
     ).fetchone()[0]
     return {
         "total": total,
@@ -185,3 +198,53 @@ def stats_for(manager_id: str | None = None) -> dict:
         },
         "avg_score": round(avg, 1) if avg is not None else None,
     }
+
+
+def stats_for(manager_id: str | None = None) -> dict:
+    """Статистика одного сотрудника (или всего отдела, если manager_id не задан)."""
+    return stats_for_ids(None if manager_id is None else [manager_id])
+
+
+def managers_scoped(manager_ids: list | None = None) -> list[sqlite3.Row]:
+    """Как managers(), но только те, кого разрешено видеть смотрящему."""
+    clause, params = _scope(manager_ids)
+    return _conn.execute(
+        f"""
+        SELECT manager_id, manager_name, COUNT(*) AS cnt
+        FROM calls WHERE 1 = 1{clause}
+        GROUP BY manager_id
+        ORDER BY cnt DESC
+        """,
+        params,
+    ).fetchall()
+
+
+def calls_between_ids(
+    start_ts: int, end_ts: int, manager_ids: list | None = None
+) -> list[sqlite3.Row]:
+    """Звонки за период с учётом видимости по роли."""
+    clause, params = _scope(manager_ids)
+    return _conn.execute(
+        f"""
+        SELECT * FROM calls
+        WHERE created_at >= ? AND created_at < ?{clause}
+        ORDER BY manager_name, created_at
+        """,
+        [start_ts, end_ts] + params,
+    ).fetchall()
+
+
+def problem_calls(manager_ids: list | None = None, limit: int = 10) -> list[sqlite3.Row]:
+    """Звонки с ошибками: ❌ неуспешные и ❓ под вопросом (свежие сверху)."""
+    clause, params = _scope(manager_ids)
+    return _conn.execute(
+        f"""
+        SELECT id, manager_id, manager_name, phone, direction, duration,
+               created_at, score, verdict, call_status
+        FROM calls
+        WHERE verdict IN ('fail', 'doubt'){clause}
+        ORDER BY created_at DESC, id DESC
+        LIMIT ?
+        """,
+        params + [limit],
+    ).fetchall()
