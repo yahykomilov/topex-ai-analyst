@@ -488,6 +488,7 @@ TEXTS = {
         # --- call analysis ---
         "analyzing": "Analyzing the call...",
         "analyzing_long": "🎧 Downloading the recording, transcribing and preparing PDF (1-2 minutes)...",
+        "report_title": "🧠 Call breakdown (dialogue, mistakes and AI score):",
         "call_not_in_crm": (
             "❌ Call not found in CRM (may be outdated). "
             "Reopen the manager's card."
@@ -513,9 +514,11 @@ TEXTS = {
         "stats_title": "📊 Overall department statistics\n",
         "stats_by_manager": "\n👥 By manager:",
         "stats_total": "📞 Total calls: {total}",
+        "stats_answered": "☎️ Answered (had a conversation): {answered}",
         "stats_ok": "✅ Successful: {count} ({percent}%)",
         "stats_fail": "❌ Unsuccessful: {count} ({percent}%)",
         "stats_doubt": "❓ Uncertain: {count} ({percent}%)",
+        "stats_noanswer": "📵 Unanswered / not picked up: {count}",
         "stats_avg": "⭐ Average score: {avg}/10",
         "stats_manager_line": "• {name}: {total} calls, ✅{ok}% ❌{fail}% ❓{doubt}%{avg}",
         "stats_manager_avg": ", avg score {avg}/10",
