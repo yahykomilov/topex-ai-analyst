@@ -168,7 +168,7 @@ TEXTS = {
             6: "недозв.",
             7: "нет соед.",
         },
-        # --- авторизация и роли (черновик текстов, ждёт вшивания auth.py в main.py) ---
+        # --- авторизация и роли (auth.py вошло в main.py — текст сверен с реальным флоу 2026-08-05) ---
         "auth_login_prompt": "🔑 Введите логин:",
         "auth_password_prompt": "🔒 Введите пароль (сообщение будет удалено после проверки):",
         "auth_failed": "❌ Неверный логин или пароль.",
@@ -452,7 +452,7 @@ TEXTS = {
             6: "javobs.",
             7: "aloqa yo'q",
         },
-        # --- avtorizatsiya va rollar (qoralama matn, auth.py main.py'ga ulanishini kutmoqda) ---
+        # --- avtorizatsiya va rollar (auth.py main.py'ga ulandi — matn real oqim bilan 2026-08-05 solishtirildi) ---
         "auth_login_prompt": "🔑 Login yuboring:",
         "auth_password_prompt": "🔒 Parolni yuboring (tekshiruvdan keyin xabar o'chiriladi):",
         "auth_failed": "❌ Login yoki parol xato.",
@@ -728,7 +728,7 @@ TEXTS = {
             6: "no ans.",
             7: "no conn.",
         },
-        # --- auth and roles (draft text, awaiting auth.py wiring into main.py) ---
+        # --- auth and roles (auth.py wired into main.py — text checked against real flow 2026-08-05) ---
         "auth_login_prompt": "🔑 Enter your login:",
         "auth_password_prompt": "🔒 Enter your password (message will be deleted after checking):",
         "auth_failed": "❌ Wrong login or password.",
