@@ -289,6 +289,38 @@ def has_any_users() -> bool:
 
 
 # --------------------------------------------------------------------------
+# Дефолтный посев (Topex Texnikum) — восстанавливает реальных пользователей,
+# если БД пустая (без persistent disk на Render каждый деплой = чистая БД).
+# --------------------------------------------------------------------------
+_DEFAULT_BRANCH = "Основной филиал"
+_DEFAULT_USERS = (
+    # login, password, role, full_name, operator_amo_id
+    ("bobur", "bobur5296", ROP, "Bobur Xolov", None),
+    ("durdona", "durdona5707", OPERATOR, "Durdona", "11549990"),
+    ("iroda", "iroda1127", OPERATOR, "Iroda", "11549998"),
+    ("ruxshona", "ruxshona3964", OPERATOR, "Ruxshona", "12580670"),
+    ("medine", "medine2523", OPERATOR, "Medine", "13711654"),
+    ("sarvinoz", "sarvinoz8750", OPERATOR, "Sarvinoz", "13711662"),
+    ("oybek", "oybek8905", DIRECTOR, "Oybek", None),
+)
+
+
+def seed_default_users() -> None:
+    if has_any_users():
+        return
+    branch_id = create_branch(_DEFAULT_BRANCH)
+    for login_name, password, role, full_name, operator_amo_id in _DEFAULT_USERS:
+        create_user(
+            login_name,
+            password,
+            role,
+            full_name=full_name,
+            branch_id=branch_id if role in (OPERATOR, ROP) else None,
+            operator_amo_id=operator_amo_id,
+        )
+
+
+# --------------------------------------------------------------------------
 # Филиалы ↔ операторы (для экранов директора и РОПа)
 # --------------------------------------------------------------------------
 def list_operators(branch_id=None) -> list:

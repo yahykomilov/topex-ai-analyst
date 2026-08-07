@@ -1876,6 +1876,7 @@ async def amo_poller() -> None:
 
 async def main() -> None:
     log.info("Бот запускается...")
+    auth.seed_default_users()
     asyncio.create_task(amo_poller())
     asyncio.create_task(daily_report_loop())
     await dp.start_polling(bot)
